@@ -24,14 +24,17 @@ try: os.makedirs(DATA, exist_ok=True)
 except OSError: pass
 
 # ------------------------------------------------------------------------------------------------ config / theme
-ACCENTS = [('Green', (45, 226, 166)), ('Blue', (80, 160, 255)), ('Orange', (250, 160, 60)), ('Pink', (240, 100, 170)), ('Yellow', (240, 210, 80))]
+ACCENTS = [('Theme', None), ('Green', (45, 226, 166)), ('Blue', (80, 160, 255)), ('Orange', (250, 160, 60)), ('Pink', (240, 100, 170)), ('Yellow', (240, 210, 80))]
 DEFAULT_CFG = {'accent': 0, 'wallpaper': 'none', 'clock24': True, 'fontscale': 1, 'timeout': 30,
                'home': ['voicemail', 'phone', 'contacts', 'messages', 'settings', 'clock', 'calc', 'browser', 'notes'], 'dark': True,
-               'setup_done': False, 'pin': '', 'autolock': True, 'slider_enabled': True, 'slider_lock': True, 'slide_unlock': True, 'slider_flip': False, 'brightness': 255, 'icon_theme': 0, 'radius': 2,
+               'setup_done': False, 'pin': '', 'autolock': True, 'slider_enabled': True, 'slider_lock': True, 'slide_unlock': True, 'slider_flip': False, 'brightness': 255, 'icon_theme': 0, 'radius': 2, 'ui_theme': 0, 'wall': 'auto',
                'alarm': {'on': False, 'h': 7, 'm': 0, 'fired': ''}}
 def load_cfg():
     c = dict(DEFAULT_CFG)
     try: c.update(json.load(open(DATA + '/config.json')))
+    except Exception: pass
+    try:
+        if 'ui_theme' not in json.load(open(DATA + '/config.json')): c['ui_theme'] = 0 if c.get('dark', True) else 1
     except Exception: pass
     return c
 CFG = load_cfg()
@@ -43,12 +46,42 @@ def wr(path, v):
 def save_cfg():
     try: json.dump(CFG, open(DATA + '/config.json', 'w'))
     except Exception: pass
+# name, background, panel (bars, selection), text, dim text, accent, wallpaper texture, matching icon style
+UI_THEMES = [('Dark', (10, 18, 20), (26, 42, 48), (228, 238, 238), (116, 138, 140), (45, 226, 166), None, 'normal'),
+             ('Light', (238, 242, 242), (210, 220, 222), (16, 24, 26), (100, 112, 114), (14, 150, 108), None, 'normal'),
+             ('Midnight', (8, 12, 28), (26, 36, 72), (222, 230, 250), (110, 124, 170), (110, 160, 255), None, 'glass'),
+             ('Forest', (10, 22, 14), (30, 56, 38), (226, 240, 226), (120, 150, 124), (130, 214, 110), None, 'normal'),
+             ('Sunset', (28, 14, 26), (70, 34, 58), (252, 232, 226), (176, 128, 130), (255, 150, 90), None, 'glass'),
+             ('Nord', (46, 52, 64), (59, 66, 82), (236, 239, 244), (150, 160, 178), (136, 192, 208), None, 'normal'),
+             ('Solarized', (0, 43, 54), (7, 54, 66), (238, 232, 213), (131, 148, 150), (42, 161, 152), None, 'normal'),
+             ('Paper', (240, 232, 214), (222, 211, 188), (44, 36, 28), (128, 116, 98), (176, 84, 40), 'paper', 'paper'),
+             ('Wood', (46, 30, 18), (74, 48, 28), (248, 232, 208), (184, 154, 116), (244, 176, 84), 'wood', 'wood'),
+             ('Metal', (44, 48, 54), (76, 82, 90), (238, 242, 246), (164, 172, 182), (124, 192, 255), 'metal', 'metal'),
+             ('High contrast', (0, 0, 0), (34, 34, 34), (255, 255, 255), (200, 200, 200), (255, 226, 0), None, 'mono'),
+             ('Terminal', (0, 10, 2), (0, 30, 10), (130, 255, 160), (52, 150, 82), (170, 255, 110), None, 'neon')]
+ICON_STYLES = ['auto', 'normal', 'dark', 'metal', 'wood', 'paper', 'glass', 'neon', 'mono']
 def theme():
     global BG, PANEL, FG, DIM, ACC, WARN, RED
-    if CFG['dark']: BG, PANEL, FG, DIM = (10, 18, 20), (22, 34, 38), (228, 238, 238), (116, 138, 140)
-    else: BG, PANEL, FG, DIM = (238, 242, 242), (210, 220, 222), (16, 24, 26), (100, 112, 114)
-    ACC = ACCENTS[CFG['accent'] % len(ACCENTS)][1]; WARN, RED = (250, 176, 60), (236, 92, 80)
+    i = CFG.get('ui_theme', 0) % len(UI_THEMES); _, BG, PANEL, FG, DIM, acc, _, _ = UI_THEMES[i]
+    ACC = ACCENTS[CFG['accent'] % len(ACCENTS)][1] or acc; WARN, RED = (250, 176, 60), (236, 92, 80)
+    CFG['dark'] = sum(BG) < 330
 theme()
+_bgc = {}
+def icon_style():
+    n = ICON_STYLES[CFG.get('icon_theme', 0) % len(ICON_STYLES)]
+    return UI_THEMES[CFG.get('ui_theme', 0) % len(UI_THEMES)][7] if n == 'auto' else n
+def bg_image():
+    """wallpaper for the current theme: its own texture (wood/metal/paper), a soft gradient, or flat colour"""
+    th = CFG.get('ui_theme', 0) % len(UI_THEMES); mode = CFG.get('wall', 'auto'); key = (th, mode, BG, ACC)
+    if key not in _bgc:
+        tex = UI_THEMES[th][6]
+        if mode in ('auto', 'texture') and tex and icon_mod: im = icon_mod.texture(tex)
+        elif mode in ('auto', 'gradient'):
+            im = Image.new('RGB', (W, H), BG); dd = ImageDraw.Draw(im)
+            for y in range(H): t = y / (H - 1) * 0.12; dd.line((0, y, W, y), fill=tuple(int(BG[j] * (1 - t) + ACC[j] * t) for j in range(3)))
+        else: im = Image.new('RGB', (W, H), BG)
+        _bgc.clear(); _bgc[key] = im
+    return _bgc[key].copy()
 _fc = {}
 def font(size, bold=False, mono=False):
     size = max(8, int(round(size * (1 + 0.15 * (CFG['fontscale'] - 1))))) if not mono else size
@@ -157,19 +190,20 @@ def wrap(d, s, f, maxw):
             else: lines.append(cur); cur = word
         lines.append(cur)
     return lines
-ICON_THEMES = ['normal', 'dark', 'metal', 'wood', 'paper']
 UI_RADIUS = [0, 3, 6, 10, 14]
 def rr(): return UI_RADIUS[max(0, min(4, CFG.get('radius', 2)))]
 def rrect(d, box, fill=None, outline=None, width=1): d.rounded_rectangle(box, rr(), fill=fill, outline=outline, width=width)
 def now_str(): return datetime.datetime.now().strftime('%H:%M' if CFG['clock24'] else '%I:%M %p').lstrip('0')
 def chrome(d, title, left, right):
-    d.rectangle((0, 0, W, 22), fill=PANEL)
+    if rr(): rrect(d, (3, 2, W - 3, 21), fill=PANEL)
+    else: d.rectangle((0, 0, W, 22), fill=PANEL)
     d.text((6, 3), now_str(), font=font(13, True), fill=FG)
     if STATE['slider_closed'] and CFG.get('slider_enabled', True): d.text((tw(d, now_str(), font(13, True)) + 14, 6), 'SCL', font=font(10, True), fill=WARN)
     cap, st, _ = battery(); bt = cap + '%' + (' +' if st.lower().startswith('charg') else '')
     d.text((W - 6 - tw(d, bt, font(12)), 4), bt, font=font(12), fill=ACC if cap not in ('0', '1', '2', '3') else WARN)
     if title: ctext(d, W / 2, 4, title, font(12, True), DIM)
-    d.rectangle((0, H - 26, W, H), fill=PANEL)
+    if rr(): rrect(d, (3, H - 25, W - 3, H - 3), fill=PANEL)
+    else: d.rectangle((0, H - 26, W, H), fill=PANEL)
     d.text((6, H - 22), left, font=font(13, True), fill=FG)
     d.text((W - 6 - tw(d, right, font(13, True)), H - 22), right, font=font(13, True), fill=FG)
 
@@ -187,7 +221,7 @@ class Popup(App):
     """Options list opened by the left soft key. fn() returns a normal key result ('back', ('open', app), None)."""
     def __init__(self, title, items): self.title = title; self.items = items; self.sel = 0; self.left = ''; self.right = 'Cancel'
     def draw(self, d, img):
-        d.rectangle((0, 22, W, H - 26), fill=BG)
+        rrect(d, (2, 24, W - 2, H - 28), fill=BG, outline=PANEL, width=2)
         for i, (n, _) in enumerate(self.items[max(0, self.sel - 9):][:10]):
             idx = max(0, self.sel - 9) + i; y = 30 + i * 26
             if idx == self.sel: rrect(d, (3, y - 2, W - 3, y + 22), fill=PANEL); d.text((4, y + 1), '>', font=font(15, True), fill=ACC)
@@ -300,7 +334,7 @@ class Phone(App):
             for i, l in enumerate(wrap(d, self.msg, font(12), W - 20)): d.text((10, 86 + i * 15), l, font=font(12), fill=WARN)
         for i, c in enumerate('123456789*0#'):
             x, y = 24 + (i % 3) * 66, 130 + (i // 3) * 38
-            d.rounded_rectangle((x, y, x + 56, y + 30), 8, fill=PANEL); ctext(d, x + 28, y + 5, c, font(18, True), FG)
+            rrect(d, (x, y, x + 56, y + 30), fill=PANEL); ctext(d, x + 28, y + 5, c, font(18, True), FG)
     def key(self, k):
         if len(k) == 1 and k in '0123456789*#': self.num += k; self.msg = ''
         elif k == 'RSK':
@@ -343,7 +377,7 @@ class Contacts(App):
         top = max(0, self.sel - 8)
         for i, c in enumerate(self.cs[top:top + 9]):
             y = 28 + i * 30; sel = top + i == self.sel
-            if sel: d.rectangle((0, y - 2, W, y + 27), fill=PANEL)
+            if sel: rrect(d, (3, y - 2, W - 3, y + 27), fill=PANEL)
             d.text((10, y), fit(d, c['name'], font(14, True), W - 20), font=font(14, True), fill=FG); d.text((10, y + 15), c['number'], font=font(11), fill=DIM)
     def key(self, k):
         if k == 'UP': self.sel = max(0, self.sel - 1)
@@ -398,7 +432,7 @@ class Messages(App):
         top = max(0, self.sel - 6)
         for i, m in enumerate(self.ms[top:top + 7]):
             y = 28 + i * 38; sel = top + i == self.sel
-            if sel: d.rectangle((0, y - 2, W, y + 35), fill=PANEL)
+            if sel: rrect(d, (3, y - 2, W - 3, y + 35), fill=PANEL)
             d.text((10, y), ('To ' if m['dir'] == 'out' else 'From ') + m['n'], font=font(13, True), fill=FG)
             d.text((10, y + 16), fit(d, m['b'].replace('\n', ' '), font(12), W - 20), font=font(12), fill=DIM)
     def key(self, k):
@@ -432,7 +466,7 @@ class Calc(App):
     title = 'Calculator'; left = '+ - x /'; right = 'Clear'
     def __init__(self): self.expr = ''; self.res = ''
     def draw(self, d, img):
-        d.rectangle((8, 30, W - 8, 100), fill=PANEL, outline=DIM)
+        rrect(d, (8, 30, W - 8, 100), fill=PANEL, outline=DIM)
         d.text((14, 36), fit(d, self.expr[-18:], font(20, True), W - 30), font=font(20, True), fill=FG); d.text((14, 70), self.res, font=font(22, True), fill=ACC)
         d.text((10, 120), '0-9 digits   * = x   # = .\nUP +  DOWN -  LEFT /  RIGHT x\nOK or CALL = equals   LSK = menu', font=font(12), fill=DIM)
     def options(self): return [('+', lambda: self.add('+')), ('-', lambda: self.add('-')), ('x', lambda: self.add('*')), ('/', lambda: self.add('/')), ('( )', lambda: self.add('('))]
@@ -483,7 +517,7 @@ class Calendar(App):
             for c, day in enumerate(week):
                 if not day: continue
                 x, y = 17 + c * 34, 78 + r * 34
-                if day == self.d: d.rounded_rectangle((x - 14, y - 3, x + 14, y + 22), 6, fill=ACC); ctext(d, x, y, str(day), font(14, True), (10, 18, 20))
+                if day == self.d: rrect(d, (x - 14, y - 3, x + 14, y + 22), fill=ACC); ctext(d, x, y, str(day), font(14, True), (10, 18, 20))
                 else: ctext(d, x, y, str(day), font(14), FG)
     def key(self, k):
         import calendar
@@ -519,7 +553,7 @@ class Files(App):
         top = max(0, self.sel - 8)
         for i, n in enumerate(self.items[top:top + 11]):
             y = 46 + i * 22; p = os.path.join(self.path, n)
-            if top + i == self.sel: d.rectangle((0, y - 1, W, y + 20), fill=PANEL)
+            if top + i == self.sel: rrect(d, (3, y - 1, W - 3, y + 20), fill=PANEL)
             d.text((8, y), fit(d, ('/' if os.path.isdir(p) else '') + n, font(14), W - 16), font=font(14), fill=ACC if os.path.isdir(p) else FG)
     def key(self, k):
         if k == 'UP': self.sel = max(0, self.sel - 1)
@@ -655,7 +689,7 @@ class DateTimeSet(App):
     def draw(self, d, img):
         for i, n in enumerate(self.F):
             y = 40 + i * 36
-            if i == self.f: d.rectangle((0, y - 4, W, y + 28), fill=PANEL)
+            if i == self.f: rrect(d, (3, y - 4, W - 3, y + 28), fill=PANEL)
             d.text((12, y + 2), n, font=font(15), fill=FG); d.text((W - 80, y), '%04d' % self.v[i] if i == 0 else '%02d' % self.v[i], font=font(20, True), fill=ACC)
     def key(self, k):
         lim = [(2020, 2099), (1, 12), (1, 31), (0, 23), (0, 59)]
@@ -680,7 +714,7 @@ def make_settings():
         def f(): CFG[key] = opts[(opts.index(CFG[key]) + 1) % len(opts)] if CFG[key] in opts else opts[0]; save_cfg(); theme(); return None
         return f
     def accent(): CFG['accent'] = (CFG['accent'] + 1) % len(ACCENTS); save_cfg(); theme()
-    def theme_t(): CFG['dark'] = not CFG['dark']; save_cfg(); theme()
+    def theme_t(): CFG['ui_theme'] = (CFG.get('ui_theme', 0) + 1) % len(UI_THEMES); save_cfg(); theme()
     def clk(): CFG['clock24'] = not CFG['clock24']; save_cfg()
     def fscale(): CFG['fontscale'] = {1: 2, 2: 3, 3: 1}.get(CFG['fontscale'], 1); save_cfg(); _fc.clear()
     def bright():
@@ -689,9 +723,10 @@ def make_settings():
         cur = int(rd(p, '0') or 0); mx = int(rd(os.path.dirname(p) + '/max_brightness', '255') or 255)
         nxt = max(10, int(((cur * 4 // mx) + 1) % 5 * mx / 4) or mx // 4); open(p, 'w').write(str(nxt))
     def tout(): CFG['timeout'] = {15: 30, 30: 60, 60: 0, 0: 15}.get(CFG['timeout'], 30); save_cfg()
-    display = ListMenu('Display', [('Brightness', lambda: (rd(bl_path() or '') or 'n/a'), lambda: bright()), ('Theme', lambda: 'Dark' if CFG['dark'] else 'Light', theme_t),
-                                   ('Accent colour', lambda: ACCENTS[CFG['accent']][0], accent), ('Text size', lambda: ['', 'Normal', 'Large', 'Huge'][CFG['fontscale']], fscale),
-                                   ('Icon style', lambda: ICON_THEMES[CFG.get('icon_theme', 0) % 5].title(), lambda: (CFG.__setitem__('icon_theme', (CFG.get('icon_theme', 0) + 1) % 5), save_cfg())[1]),
+    display = ListMenu('Display', [('Brightness', lambda: (rd(bl_path() or '') or 'n/a'), lambda: bright()), ('Theme', lambda: UI_THEMES[CFG.get('ui_theme', 0) % len(UI_THEMES)][0], theme_t),
+                                   ('Accent colour', lambda: ACCENTS[CFG['accent'] % len(ACCENTS)][0], accent), ('Text size', lambda: ['', 'Normal', 'Large', 'Huge'][CFG['fontscale']], fscale),
+                                   ('Icon style', lambda: ICON_STYLES[CFG.get('icon_theme', 0) % len(ICON_STYLES)].title(), lambda: (CFG.__setitem__('icon_theme', (CFG.get('icon_theme', 0) + 1) % len(ICON_STYLES)), save_cfg())[1]),
+                                   ('Wallpaper', lambda: CFG.get('wall', 'auto').title(), lambda: (CFG.__setitem__('wall', {'auto': 'gradient', 'gradient': 'flat', 'flat': 'auto'}.get(CFG.get('wall', 'auto'), 'auto')), save_cfg())[1]),
                                    ('Corner radius', lambda: ['Square', 'Small', 'Medium', 'Large', 'Round'][CFG.get('radius', 2)], lambda: (CFG.__setitem__('radius', (CFG.get('radius', 2) + 1) % 5), save_cfg())[1]),
                                    ('Clock format', lambda: '24 h' if CFG['clock24'] else '12 h', clk), ('Screen timeout', lambda: ('%ds' % CFG['timeout']) if CFG['timeout'] else 'never', tout)])
     return display
@@ -746,6 +781,25 @@ def modem_menu():
                                       ('Start at boot', lambda: 'On' if auto() else 'Off', tog),
                                       ('Info', None, lambda: ('open', TextBox('Modem', 'The modem DSP provides audio.\nIt needs a file service (rmtfs) that this phone software runs for it.\nCalls, SMS and SIM are not wired up yet.\n\nIf the phone ever fails to boot with Start at boot on, it turns itself off for the next boot.')))])
 
+
+def adb_menu():
+    usb = lambda: os.path.exists(DATA + '/adb-usb'); net = lambda: rd(DATA + '/adb-tcp') if os.path.exists(DATA + '/adb-tcp') else ''
+    def tog_usb():
+        if usb(): os.remove(DATA + '/adb-usb')
+        else: open(DATA + '/adb-usb', 'w').close()
+    def set_net(v):
+        if v is None:
+            if os.path.exists(DATA + '/adb-tcp'): os.remove(DATA + '/adb-tcp')
+        else: open(DATA + '/adb-tcp', 'w').write(v)
+        return 'popback2'
+    def tog_net():
+        if net(): set_net(None); return None
+        return ('open', Popup('adb over WiFi', [('Enable (anyone on the WiFi gets a root shell)', lambda: set_net('lan')), ('Cancel', lambda: 'popback')]))
+    return ListMenu('ADB', [('USB debugging', lambda: 'On' if usb() else 'Off', tog_usb),
+                            ('adb over WiFi', lambda: 'On (open!)' if net() == 'lan' else 'Off', tog_net),
+                            ('IP address', lambda: wlan_ip() or 'no WiFi', lambda: None),
+                            ('How to use', None, lambda: ('open', TextBox('ADB', 'USB: plug the phone in and run\n  adb devices\n  adb shell\n  adb push FILE /path\n  adb pull /path FILE\n  adb reboot [recovery|bootloader|edl]\n\nWiFi: turn on "adb over WiFi", then\n  adb connect %s:5555\nThere is NO authentication: anyone on the same network gets a root shell. Use it only on networks you trust and turn it off afterwards.' % (wlan_ip() or '<phone IP>'))))])
+
 class Settings(ListMenu):
     def __init__(self):
         items = [('Display & theme', None, lambda: ('open', make_settings())), ('Home screen keys', None, lambda: ('open', home_layout())),
@@ -753,6 +807,8 @@ class Settings(ListMenu):
                  ('Slider', lambda: ('' if not CFG['slider_enabled'] else ('Closed' if STATE['slider_closed'] else 'Open')), lambda: ('open', slider_menu())),
                  ('WiFi', None, lambda: ('open', WifiApp())),
                  ('Modem / audio', lambda: 'Running' if audio_ok() else 'Off', lambda: ('open', modem_menu())),
+                 ('Bluetooth', lambda: 'BLE' if bt_available() else 'n/a', lambda: ('open', BluetoothApp())),
+                 ('ADB', lambda: ('USB' if os.path.exists(DATA + '/adb-usb') else 'Off') + (' + WiFi' if os.path.exists(DATA + '/adb-tcp') else ''), lambda: ('open', adb_menu())),
                  ('Software update', lambda: 'v' + os_version(), lambda: ('open', SystemUpdate())),
                  ('Sound', None, lambda: ('open', Stub('Sound', ['Audio is not working yet.', 'It needs the modem/audio DSP bring-up.']))),
                  ('Battery', None, lambda: ('open', TextBox('Battery', 'level %s%%\nstatus %s\nvoltage %.2f V\ntemp %s' % (battery()[0], battery()[1], int(battery()[2] or 0) / 1e6, rd('/sys/class/power_supply/battery/temp', '?'))))),
@@ -890,7 +946,7 @@ class Monitor(App):
         self.prev = (tot, idle)
     def bar(self, d, y, label, pct, text):
         d.text((8, y), label, font=font(12, True), fill=DIM); d.text((W - 8 - tw(d, text, font(12)), y), text, font=font(12), fill=FG)
-        d.rectangle((8, y + 17, W - 8, y + 25), outline=DIM); d.rectangle((9, y + 18, max(9, 8 + (W - 18) * max(0, min(100, pct)) / 100), y + 24), fill=ACC)
+        rrect(d, (8, y + 17, W - 8, y + 25), outline=DIM); rrect(d, (9, y + 18, max(11, 8 + (W - 18) * max(0, min(100, pct)) / 100), y + 24), fill=ACC)
     def draw(self, d, img):
         self.sample()
         try: mem = {l.split(':')[0]: int(l.split()[1]) // 1024 for l in open('/proc/meminfo') if l.split(':')[0] in ('MemTotal', 'MemFree', 'Cached', 'Buffers')}
@@ -916,7 +972,7 @@ class BatteryApp(App):
     def draw(self, d, img):
         cap, st, mv = battery(); b = '/sys/class/power_supply/battery/'
         ctext(d, W / 2, 50, cap + '%', font(50, True), ACC if cap.isdigit() and int(cap) > 10 else WARN)
-        d.rounded_rectangle((40, 130, W - 40, 160), 6, outline=FG, width=2); d.rectangle((44, 134, 44 + (W - 88) * (int(cap) if cap.isdigit() else 0) / 100, 156), fill=ACC)
+        rrect(d, (40, 130, W - 40, 160), outline=FG, width=2); rrect(d, (44, 134, max(46, 44 + (W - 88) * (int(cap) if cap.isdigit() else 0) / 100), 156), fill=ACC)
         for i, l in enumerate(['status   ' + st, 'voltage  %.3f V' % (int(mv or 0) / 1e6), 'current  %s mA' % (int(rd(b + 'current_now', '0') or 0) // 1000), 'health   ' + rd(b + 'health', '?'), 'temp     %s' % rd(b + 'temp', '?'), 'USB      ' + ('yes' if rd('/sys/class/power_supply/usb/online', '0') == '1' else 'no')]):
             d.text((20, 176 + i * 19), l, font=font(12, mono=True), fill=FG)
 class AlarmApp(App):
@@ -946,8 +1002,8 @@ class Setup(App):
         if st == 'welcome': ctext(d, W / 2, 56, 'jgmDeb', font(34, True), ACC); para(110, 'Welcome. This short setup takes a minute.\n\nNext: time, look, slider and PIN.')
         elif st == 'datetime': ctext(d, W / 2, 60, now_str(), font(40, True), ACC); para(120, datetime.datetime.now().strftime('%A %d %B %Y')); para(160, 'Press OK to set the date and time.', 13, DIM)
         elif st == 'theme':
-            para(52, 'Theme:  ' + ('Dark' if CFG['dark'] else 'Light') + '   (UP/DOWN)', 14); para(90, 'Colour:  ' + ACCENTS[CFG['accent']][0] + '   (LEFT/RIGHT)', 14, ACC)
-            d.rounded_rectangle((60, 140, W - 60, 220), 10, fill=PANEL, outline=ACC, width=3); ctext(d, W / 2, 168, 'Preview', font(18, True), ACC)
+            para(52, 'Theme:  ' + UI_THEMES[CFG.get('ui_theme', 0) % len(UI_THEMES)][0] + '   (UP/DOWN)', 14); para(90, 'Colour:  ' + ACCENTS[CFG['accent'] % len(ACCENTS)][0] + '   (LEFT/RIGHT)', 14, ACC)
+            rrect(d, (60, 140, W - 60, 220), fill=PANEL, outline=ACC, width=3); ctext(d, W / 2, 168, 'Preview', font(18, True), ACC)
         elif st == 'slider':
             para(52, 'The slider cover:', 15); para(84, 'Use slider:  ' + ('Yes' if CFG['slider_enabled'] else 'No') + '   (OK)', 14, ACC)
             para(120, 'Now: ' + ('closed' if STATE['slider_closed'] else 'open') + '. Slide it to check - the state should change. If it is backwards, press 5 to swap.', 12, DIM)
@@ -964,7 +1020,7 @@ class Setup(App):
             else: CFG['setup_done'] = True; save_cfg(); return 'back'
         elif st == 'datetime' and k == 'OK': return ('open', DateTimeSet())
         elif st == 'theme':
-            if k in ('UP', 'DOWN'): CFG['dark'] = not CFG['dark']; theme(); save_cfg()
+            if k in ('UP', 'DOWN'): CFG['ui_theme'] = (CFG.get('ui_theme', 0) + (1 if k == 'DOWN' else -1)) % len(UI_THEMES); theme(); save_cfg()
             elif k in ('LEFT', 'RIGHT'): CFG['accent'] = (CFG['accent'] + (1 if k == 'RIGHT' else -1)) % len(ACCENTS); theme(); save_cfg()
         elif st == 'slider':
             if k == 'OK': CFG['slider_enabled'] = not CFG['slider_enabled']; save_cfg()
@@ -1187,7 +1243,15 @@ def MusicApp():
 # ---- YouTube downloader (yt-dlp)
 class YtDl(App):
     title = 'YT download'; left = 'Menu'; tick = 1
-    def __init__(self): self.msg = 'Search or paste a link'; self.prog = 0; self.job = None; self.results = []; self.pending = None
+    def __init__(self):
+        self.msg = 'Search or paste a link'; self.prog = 0; self.job = None; self.results = []; self.pending = None
+        if not os.path.exists('/usr/local/bin/yt-dlp'): threading.Thread(target=self.fetch_ytdlp, daemon=True).start()
+    def fetch_ytdlp(self):
+        try:
+            self.msg = 'Installing yt-dlp...'
+            req = urllib.request.Request('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', headers={'User-Agent': 'jgmDeb'})
+            data = urllib.request.urlopen(req, timeout=90).read(); open('/usr/local/bin/yt-dlp.new', 'wb').write(data); os.chmod('/usr/local/bin/yt-dlp.new', 0o755); os.replace('/usr/local/bin/yt-dlp.new', '/usr/local/bin/yt-dlp'); self.msg = 'yt-dlp ready'
+        except Exception as e: self.msg = 'yt-dlp install failed: ' + str(e)[:30]
     def options(self):
         return [('Search', lambda: ('popopen', Editor('Search YouTube', '', on_done=self.search))), ('Paste URL', lambda: ('popopen', Editor('Video URL', 'https://', on_done=lambda u: setattr(self, 'pending', self.ask(u, u))))),
                 ('Downloaded files', lambda: ('popopen', MediaFiles())), ('Update yt-dlp', lambda: (self.update(), 'popback')[1])]
@@ -1222,7 +1286,7 @@ class YtDl(App):
     def draw(self, d, img):
         ctext(d, W / 2, 60, 'YouTube', font(26, True), ACC); ctext(d, W / 2, 96, 'downloader', font(16), FG)
         for i, l in enumerate(wrap(d, self.msg, font(13), W - 20)[:4]): ctext(d, W / 2, 140 + i * 18, l, font(13), FG)
-        if self.job: d.rectangle((20, 220, W - 20, 236), outline=FG); d.rectangle((22, 222, 22 + (W - 44) * self.prog / 100, 234), fill=ACC)
+        if self.job: rrect(d, (20, 220, W - 20, 236), outline=FG); rrect(d, (22, 222, max(26, 22 + (W - 44) * self.prog / 100), 234), fill=ACC)
         ctext(d, W / 2, 262, 'Menu: search / paste link', font(11), DIM)
     def key(self, k):
         if self.pending: p, self.pending = self.pending, None; return p
@@ -1430,13 +1494,160 @@ def check_updates_bg():
 
 def load_installed_apps():
     for man in installed_apps().values(): register_app(man)
+# --------------------------------------------------------------------------------------------- browser (text/HTML reader) and Bluetooth
+from html.parser import HTMLParser
+class _Page(HTMLParser):
+    """HTML -> paragraphs of words; links are numbered. Skips scripts, styles, head."""
+    BLOCK = {'p', 'div', 'br', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'section', 'article', 'header', 'footer', 'blockquote', 'pre', 'form', 'hr'}
+    def __init__(self, base):
+        super().__init__(convert_charrefs=True); self.base = base; self.paras = [[]]; self.links = []; self.skip = 0; self.cur = None; self.head = 0; self.title = ''; self.intitle = False
+    def nl(self):
+        if self.paras[-1]: self.paras.append([])
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in ('script', 'style', 'noscript', 'svg', 'template'): self.skip += 1
+        elif tag == 'title': self.intitle = True
+        elif tag in self.BLOCK:
+            self.nl()
+            if tag == 'li': self.paras[-1].append(('•', None, 0))
+            if tag[0] == 'h' and len(tag) == 2: self.head = 1
+        elif tag == 'a' and a.get('href') and not a['href'].startswith(('javascript:', '#', 'mailto:')):
+            self.links.append(urllib.parse.urljoin(self.base, a['href'])); self.cur = len(self.links) - 1
+        elif tag == 'img': self.paras[-1].append(('[img]' if not a.get('alt') else '[' + a['alt'][:20] + ']', self.cur, 0))
+    def handle_endtag(self, tag):
+        if tag in ('script', 'style', 'noscript', 'svg', 'template'): self.skip = max(0, self.skip - 1)
+        elif tag == 'title': self.intitle = False
+        elif tag in self.BLOCK:
+            self.nl()
+            if tag[0] == 'h' and len(tag) == 2: self.head = 0
+        elif tag == 'a': self.cur = None
+    def handle_data(self, data):
+        if self.intitle: self.title += data.strip()
+        if self.skip: return
+        for w in data.split(): self.paras[-1].append((w, self.cur, self.head))
+def fetch_page(url):
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Mobile; jgmDeb) Gecko/1.0 Firefox/115.0', 'Accept': 'text/html,*/*;q=0.8', 'Accept-Language': 'en'})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        raw = r.read(2_000_000); final = r.geturl(); ct = r.headers.get('Content-Type', '')
+        enc = r.headers.get_content_charset() or (re.search(rb'charset=["\']?([\w-]+)', raw[:2000]) or [None, b'utf-8'])[1]
+    if isinstance(enc, bytes): enc = enc.decode()
+    if 'html' not in ct and 'text' not in ct: return final, 'Download', '[%s - %d KB: not a web page]' % (ct or 'unknown type', len(raw) // 1024), [], [[('[%s]' % (ct or 'file'), None, 0)]]
+    p = _Page(final); p.feed(raw.decode(enc or 'utf-8', 'replace')); return final, p.title, '', p.links, [x for x in p.paras if x]
+class Browser(App):
+    title = 'Browser'; left = 'Menu'; tick = 1
+    HOME = 'https://lite.duckduckgo.com/lite/'
+    def __init__(self, url=None):
+        self.hist = []; self.url = ''; self.page_title = ''; self.paras = []; self.links = []; self.lines = []; self.sel = -1; self.top = 0; self.msg = ''; self.pending = None; self.wrapw = None
+        self.go(url or CFG.get('browser_home', self.HOME))
+    def go(self, url, push=True):
+        if not re.match(r'^[a-z]+://', url): url = ('https://' + url) if '.' in url and ' ' not in url else 'https://lite.duckduckgo.com/lite/?q=' + urllib.parse.quote(url)
+        def work():
+            self.msg = 'Loading...'
+            try:
+                final, title, note, links, paras = fetch_page(url)
+                if push and self.url: self.hist.append(self.url)
+                self.url, self.page_title, self.links, self.paras = final, title, links, paras; self.lines = []; self.top = 0; self.sel = 0 if links else -1; self.msg = note
+                self.title = (title or urllib.parse.urlparse(final).netloc)[:22]
+            except Exception as e: self.msg = 'Failed: ' + str(e)[:40]
+        threading.Thread(target=work, daemon=True).start()
+    def layout(self, d):
+        f = font(12); wrap_w = W - 12; self.lines = []; space = tw(d, ' ', f)
+        for para in self.paras:
+            line = []; x = 0
+            for w, link, head in para:
+                fw = tw(d, w, font(12, bool(head)))
+                if x + fw > wrap_w and line: self.lines.append(line); line = []; x = 0
+                line.append((w, link, head, x)); x += fw + space
+            if line: self.lines.append(line)
+            self.lines.append([])
+    def link_line(self, li):
+        for i, l in enumerate(self.lines):
+            if any(seg[1] == li for seg in l): return i
+        return 0
+    def options(self):
+        return [('Go to address / search', lambda: ('popopen', Editor('Address or search', '', on_done=lambda u: self.go(u)))), ('Back', self.back), ('Reload', lambda: (self.go(self.url, False), 'popback')[1]),
+                ('Set as home page', lambda: (CFG.__setitem__('browser_home', self.url), save_cfg(), 'popback')[2]), ('Bookmarks', lambda: ('popopen', self.bookmarks())),
+                ('Add bookmark', lambda: (jsave('bookmarks.json', jload('bookmarks.json', []) + [{'t': self.page_title or self.url, 'u': self.url}]), 'popback')[1]),
+                ('Download via YT downloader', lambda: ('popopen', YtDl()) if 'youtu' in self.url else None)]
+    def bookmarks(self):
+        bm = jload('bookmarks.json', [])
+        return PickList('Bookmarks', [(b['t'], b['u']) for b in bm], lambda i: (self.go(bm[i]['u']), 'popback2')[1])
+    def back(self):
+        if self.hist: self.go(self.hist.pop(), False)
+        return 'popback'
+    def draw(self, d, img):
+        if not self.lines and self.paras: self.layout(d)
+        f = font(12); y0 = 26; rows = (H - 56 - y0) // 15; top = self.top
+        if self.sel >= 0 and self.lines:                       # keep the selected link on screen
+            ll = self.link_line(self.sel)
+            if ll < top: top = ll
+            elif ll >= top + rows: top = ll - rows + 1
+            self.top = top
+        for i, l in enumerate(self.lines[top:top + rows]):
+            y = y0 + i * 15
+            for w, link, head, x in l:
+                sel = link is not None and link == self.sel
+                fw = tw(d, w, font(12, bool(head)))
+                if sel: rrect(d, (6 + x - 2, y - 1, 6 + x + fw + 2, y + 14), fill=ACC)
+                d.text((6 + x, y), w, font=font(12, bool(head)), fill=(10, 18, 20) if sel else (ACC if link is not None else (FG if not head else ACC)))
+        st = self.msg or (self.links[self.sel] if 0 <= self.sel < len(self.links) else '')
+        d.rectangle((0, H - 46, W, H - 28), fill=BG); d.text((6, H - 44), fit(d, st or self.url, font(10), W - 12), font=font(10), fill=DIM)
+        if not self.paras and not self.msg: ctext(d, W / 2, 120, 'Loading...', font(14), DIM)
+    def key(self, k):
+        if k == 'UP': self.top = max(0, self.top - 3);
+        elif k == 'DOWN': self.top = min(max(0, len(self.lines) - 3), self.top + 3)
+        elif k in ('RIGHT', '6', '#'):
+            if self.links: self.sel = min(len(self.links) - 1, self.sel + 1)
+        elif k in ('LEFT', '4', '*'):
+            if self.links: self.sel = max(0, self.sel - 1)
+        elif k in ('OK', 'CALL'):
+            if 0 <= self.sel < len(self.links): self.go(self.links[self.sel])
+        elif k == '0': return ('open', Popup('Browser', [('Go to address', lambda: ('popopen', Editor('Address or search', '', on_done=lambda u: self.go(u))))]))
+        elif k in ('RSK', 'END'):
+            if self.hist: self.go(self.hist.pop(), False)
+            else: return 'back'
+        elif k == '2': self.top = max(0, self.top - 12)
+        elif k == '8': self.top = min(max(0, len(self.lines) - 3), self.top + 12)
+        if k in ('UP', 'DOWN', '2', '8'): self.sel_from_scroll()
+    def sel_from_scroll(self): pass
+
+# ---- Bluetooth (Low Energy only: the controller is driven in user space by jgmble.py)
+try: import jgmble
+except Exception: jgmble = None
+def bt_available(): return bool(jgmble and jgmble.BLE.available() and os.path.exists('/dev/smd3'))
+class BluetoothApp(PickList):
+    def __init__(self):
+        self.found = {}; self.msg = 'Scanning...' if bt_available() else 'Bluetooth not available (WiFi/WCNSS not started?)'
+        super().__init__('Bluetooth', lambda: [((v['name'] or 'Unknown device'), '%s   %d dBm   %s' % (a, v['rssi'], 'random' if v['type'] else 'public')) for a, v in sorted(self.found.items(), key=lambda kv: -kv[1]['rssi'])],
+                         self.info, lambda: [('Scan again', lambda: (self.scan(), 'popback')[1])], status=lambda: self.msg)
+        if bt_available(): self.scan()
+    def scan(self):
+        def work():
+            try: self.msg = 'Scanning...'; self.found = jgmble.get().scan(6); self.msg = '%d devices (Low Energy only)' % len(self.found)
+            except Exception as e: self.msg = 'Scan failed: ' + str(e)[:40]
+        threading.Thread(target=work, daemon=True).start()
+    def info(self, i):
+        addr = sorted(self.found, key=lambda a: -self.found[a]['rssi'])[i]; v = self.found[addr]
+        def probe():
+            def work():
+                try:
+                    b = jgmble.get(); b.connect(addr, v['type'], 8); ch = b.discover(); nm = ''
+                    try: nm = b.read('00002a00-0000-1000-8000-00805f9b34fb').decode('utf8', 'replace')
+                    except Exception: pass
+                    b.disconnect(); self.msg = '%s: %d services/characteristics%s' % (addr[-5:], len(ch), ('  name "%s"' % nm) if nm else '')
+                except Exception as e: self.msg = 'Connect failed: ' + str(e)[:40]
+                finally:
+                    try: jgmble.get().disconnect()
+                    except Exception: pass
+            self.msg = 'Connecting...'; threading.Thread(target=work, daemon=True).start(); return 'popback'
+        return ('open', Popup(v['name'] or addr, [('Connect and read info', probe), ('Cancel', lambda: 'popback')]))
 
 APP_META = [  # id, name, glyph, colour, factory
     ('voicemail', 'Voicemail', '☎', (120, 130, 240), lambda: Stub('Voicemail', ['Not available yet', 'needs the modem'])),
     ('phone', 'Phone', '☎', (60, 190, 120), Phone), ('contacts', 'Contacts', '☺', (70, 150, 240), Contacts),
     ('messages', 'Messages', '✉', (240, 170, 60), Messages), ('settings', 'Settings', '⚙', (150, 160, 170), Settings),
     ('clock', 'Clock', '⏰', (230, 110, 100), Clock), ('calc', 'Calculator', '+−', (170, 120, 230), Calc),
-    ('browser', 'Browser', '⌁', (60, 200, 220), lambda: Stub('Browser', ['Needs WiFi or mobile data.', 'Neither works yet.'])),
+    ('browser', 'Browser', '⌁', (60, 200, 220), Browser), ('bluetooth', 'Bluetooth', '', (70, 120, 230), BluetoothApp),
     ('notes', 'Notes', '✎', (240, 210, 80), Notes), ('files', 'Files', '⌂', (180, 200, 120), Files),
     ('terminal', 'Terminal', '>_', (80, 90, 100), Terminal), ('calendar', 'Calendar', '☷', (240, 110, 150), Calendar),
     ('torch', 'Flashlight', '☀', (250, 220, 100), Torch), ('snake', 'Snake', '●', (90, 210, 90), Snake),
@@ -1454,15 +1665,13 @@ class Grid(App):
     """Home screen (9 configurable keys) or all-apps view."""
     def __init__(self, ids, home=True): self.ids = ids; self.sel = 0; self.home = home; self.left = 'Menu' if home else ''; self.right = 'Contacts' if home else 'Back'
     def draw(self, d, img):
-        if CFG['wallpaper'] == 'gradient':
-            for y in range(24, H - 26, 4): c = int(8 + (y - 24) * 18 / (H - 50)); d.rectangle((0, y, W, y + 4), fill=(c, c + 10, c + 14) if CFG['dark'] else (238 - c, 242 - c, 242 - c))
         page = self.sel // 9 * 9; shown = self.ids[page:page + 9]
         for i, aid in enumerate(shown):
             a = APP_BY_ID.get(aid)
             if not a: continue
             cx, cy = 40 + (i % 3) * 80, 62 + (i // 3) * 84
             if page + i == self.sel: d.rounded_rectangle((cx - 36, cy - 30, cx + 36, cy + 48), max(2, rr() + 4), outline=ACC, width=2)
-            if icon: ic = icon(a[0], 46, ICON_THEMES[CFG.get('icon_theme', 0) % 5], CFG.get('radius', 2)); img.paste(ic, (cx - 23, cy - 26), ic)
+            if icon: ic = icon(a[0], 46, icon_style(), CFG.get('radius', 2)); img.paste(ic, (cx - 23, cy - 26), ic)
             else: d.ellipse((cx - 22, cy - 24, cx + 22, cy + 20), fill=a[3])
             if self.home and page == 0: d.text((cx - 32, cy - 28), str(i + 1), font=font(10, True), fill=ACC)
             ctext(d, cx, cy + 24, fit(d, a[1], font(11, True), 74), font(11, True), FG)
@@ -1486,7 +1695,7 @@ class Grid(App):
 
 # --------------------------------------------------------------------------------------------- main loop
 def render(app):
-    img = Image.new('RGB', (W, H), BG); d = ImageDraw.Draw(img)
+    img = bg_image(); d = ImageDraw.Draw(img)
     try: app.draw(d, img)
     except Exception:
         traceback.print_exc(); d.rectangle((0, 24, W, H - 28), fill=BG); d.text((10, 40), 'This screen hit an error.', font=font(14, True), fill=RED); d.text((10, 64), 'Press Back.', font=font(13), fill=FG)

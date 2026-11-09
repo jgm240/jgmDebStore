@@ -1,7 +1,7 @@
 """jgmDeb app icons (own work): drawn with Pillow at 4x and scaled down (anti-aliased), no font symbols or image files needed.
 icon(id, size) -> RGBA image. Colours are chosen here; the glyph is drawn in white/dark on a rounded-square or circular base."""
 import math
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 WHITE = (250, 252, 252); DARK = (18, 26, 30)
 _cache = {}
@@ -99,6 +99,9 @@ def g_alarm(d, s, base):
     d.ellipse(R(s, (28, 34, 72, 78)), fill=base); d.line(R(s, (50, 58, 50, 42)), fill=WHITE, width=int(4 * s)); d.line(R(s, (50, 58, 61, 64)), fill=WHITE, width=int(4 * s))
 
 
+def g_bt(d, s):
+    pts = [(34, 34), (66, 66), (50, 82), (50, 18), (66, 34), (34, 66)]
+    d.line(P(s, pts), fill=WHITE, width=int(7 * s), joint='curve')
 def g_store(d, s):
     d.polygon(P(s, [(24, 36), (76, 36), (80, 86), (20, 86)]), fill=WHITE)
     d.arc(R(s, (34, 14, 66, 52)), 180, 360, fill=WHITE, width=int(5 * s))
@@ -136,15 +139,15 @@ ICONS = {
     'snake': (g_snake, (100, 214, 110), (30, 140, 70)), 'camera': (g_camera, (220, 110, 110), (170, 50, 70)), 'music': (g_music, (170, 130, 240), (110, 70, 210)),
     'wifi': (g_wifi, (100, 180, 250), (40, 110, 220)), 'voicemail': (g_voicemail, (136, 146, 250), (80, 90, 220)), 'monitor': (g_monitor, (60, 80, 100), (24, 34, 46)),
     'battery': (g_battery, (110, 224, 140), (40, 170, 90)), 'alarm': (g_alarm, (255, 150, 120), (226, 80, 70)),
-    'store': (g_store, (70, 140, 220), (40, 100, 200)), 'news': (g_news, (240, 120, 100), (200, 60, 70)), 'weather': (g_weather, (90, 170, 245), (40, 100, 210)), 'ytdl': (g_ytdl, (240, 80, 80), (190, 30, 50)),
+    'bluetooth': (g_bt, (70, 120, 230), (40, 80, 200)), 'store': (g_store, (70, 140, 220), (40, 100, 200)), 'news': (g_news, (240, 120, 100), (200, 60, 70)), 'weather': (g_weather, (90, 170, 245), (40, 100, 210)), 'ytdl': (g_ytdl, (240, 80, 80), (190, 30, 50)),
     'notifs': (g_bell, (255, 190, 80), (235, 120, 40)), 'radio': (g_radio, (110, 200, 190), (40, 140, 140)), 'hotspot': (g_share, (120, 210, 150), (40, 150, 100))}
 _NEEDS_BASE = {'news', 'radio', 'messages', 'settings', 'clock', 'calc', 'browser', 'notes', 'files', 'terminal', 'calendar', 'torch', 'snake', 'camera', 'music', 'wifi', 'voicemail', 'monitor', 'battery', 'alarm'}
 
 # --------------------------------------------------------------------------------------------- themed rendering
 import numpy as np
-THEMES = ['normal', 'dark', 'metal', 'wood', 'paper']
+THEMES = ['normal', 'dark', 'metal', 'wood', 'paper', 'glass', 'neon', 'mono']
 RADII = [0.0, 0.12, 0.24, 0.36, 0.5]                       # fraction of the icon size: square .. circle
-COL = {'store': (70, 140, 220), 'phone': (52, 168, 110), 'contacts': (66, 128, 196), 'messages': (236, 160, 60), 'settings': (112, 120, 132), 'clock': (214, 88, 84), 'calc': (140, 100, 190),
+COL = {'bluetooth': (60, 110, 225), 'store': (70, 140, 220), 'phone': (52, 168, 110), 'contacts': (66, 128, 196), 'messages': (236, 160, 60), 'settings': (112, 120, 132), 'clock': (214, 88, 84), 'calc': (140, 100, 190),
        'browser': (60, 160, 190), 'notes': (226, 186, 70), 'files': (122, 160, 92), 'terminal': (46, 54, 62), 'calendar': (214, 70, 92), 'torch': (230, 150, 50),
        'snake': (80, 170, 90), 'camera': (190, 80, 92), 'music': (140, 100, 200), 'wifi': (70, 140, 210), 'voicemail': (110, 120, 220), 'monitor': (52, 72, 92),
        'battery': (80, 180, 112), 'alarm': (230, 110, 90), 'news': (200, 80, 80), 'weather': (80, 150, 225), 'ytdl': (210, 50, 60), 'notifs': (232, 150, 60),
@@ -215,6 +218,11 @@ def icon(name, size=46, theme='normal', radius=2):
     elif theme == 'wood': base = _wood(S, hash(name) % 97); gcol = np.array([58, 30, 14], np.float32); ghi = 1; edge = True
     elif theme == 'paper': base = np.broadcast_to(np.array([240, 234, 220], np.float32), (S, S, 3)).copy(); gcol = np.array(base_col, np.float32) * 0.85; ghi = 0; edge = False
     elif theme == 'dark': base = _grad(S, (34, 40, 46), (22, 27, 32)); gcol = np.array(base_col, np.float32) * 1.15 + 25; ghi = 0; edge = False
+    elif theme == 'glass':
+        c = np.array(base_col, np.float32); base = _grad(S, np.minimum(c * 1.25 + 20, 255), c * 0.72); gcol = np.array([255, 255, 255], np.float32); ghi = 0; edge = False
+        gl = np.zeros((S, S), np.float32); yy = np.linspace(0, 1, S)[:, None]; gl += np.clip(1 - yy / 0.5, 0, 1) * 0.28; base = base + gl[..., None] * 255 * 0.6
+    elif theme == 'neon': base = _grad(S, (14, 16, 26), (8, 10, 18)); gcol = np.clip(np.array(base_col, np.float32) * 1.25 + 40, 0, 255); ghi = 0; edge = False
+    elif theme == 'mono': base = _grad(S, (58, 66, 76), (40, 46, 54)); gcol = np.array([226, 232, 238], np.float32); ghi = 0; edge = False
     else: c = np.array(base_col, np.float32); base = _grad(S, c * 1.06, c * 0.94); gcol = np.array([252, 252, 252], np.float32); ghi = 0; edge = False
     gcol = np.clip(gcol, 0, 255); img = base.copy()
     if ghi:                                              # embossed / engraved look: light edge below-right, dark glyph
@@ -224,6 +232,29 @@ def icon(name, size=46, theme='normal', radius=2):
     if edge or theme == 'normal':
         hi, lo = _bevel(S, shape, 70 if edge else 26, 70 if edge else 30, 3 if edge else 2)
         img = img + hi[..., None] - lo[..., None]
+    if theme == 'neon':                                    # glow: blurred glyph in the glyph colour, plus a thin coloured rim
+        gl = Image.fromarray((gm_np * 255).astype(np.uint8), 'L').filter(ImageFilter.GaussianBlur(S * 0.035)); g = np.asarray(gl).astype(np.float32) / 255.0
+        img = img + gcol[None, None, :] * (g[..., None] * 0.55)
+        rim = np.asarray(shape).astype(np.float32) / 255.0 - np.asarray(Image.fromarray(np.asarray(shape)).filter(ImageFilter.MinFilter(max(3, S // 40 * 2 + 1)))).astype(np.float32) / 255.0
+        img = img + gcol[None, None, :] * (np.clip(rim, 0, 1)[..., None] * 0.55)
+    if theme == 'glass':
+        rim = np.asarray(shape).astype(np.float32) / 255.0 - np.asarray(Image.fromarray(np.asarray(shape)).filter(ImageFilter.MinFilter(max(3, S // 50 * 2 + 1)))).astype(np.float32) / 255.0
+        img = img + np.clip(rim, 0, 1)[..., None] * 90
     out = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), 'RGB').convert('RGBA'); out.putalpha(shape)
     out = out.resize((size, size), Image.LANCZOS); _cache[key] = out
     return out
+
+
+_tex = {}
+def texture(kind, w=240, h=320, dim=0.42):
+    """dark, low-contrast wallpaper textures for the wood / metal / paper themes -> RGB image"""
+    k = (kind, w, h, dim)
+    if k in _tex: return _tex[k]
+    S = max(w, h)
+    if kind == 'wood': a = _wood(S, 7)
+    elif kind == 'metal': a = _metal(S, 5)
+    else:
+        rng = np.random.RandomState(3); n = rng.rand(S, S).astype(np.float32); a = np.broadcast_to(np.array([236, 228, 210], np.float32), (S, S, 3)) * (0.96 + 0.04 * n[..., None])
+    a = a[:h, :w] * (dim if kind != 'paper' else 1.0)
+    yy = np.linspace(0.85, 1.0, h)[:, None, None]; a = a * yy
+    im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), 'RGB'); _tex[k] = im; return im

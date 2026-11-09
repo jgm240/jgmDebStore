@@ -1,1 +1,1 @@
-First store release: Store, software updater, JWLink, icon styles, audio, news, weather, YouTube downloader.
+Bluetooth LE (Settings > Bluetooth), ADB over USB/WiFi (Settings > ADB), 12 UI themes + 8 icon styles + corner radius everywhere, text web browser with bookmarks, JWLink 1.1.0 on the new Bluetooth stack.

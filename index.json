@@ -5,20 +5,20 @@
   {
    "id": "jwlink",
    "name": "JWLink",
-   "version": "1.0.0",
+   "version": "1.1.0",
    "author": "jgm240",
    "description": "Companion app for the JWatch (Bluetooth LE)",
-   "long": "Scan for and connect to your JWatch, sync the time, find the watch, set Do Not Disturb, rename it and read battery, heart rate, steps and firmware. Needs a working Bluetooth adapter (hci0) with bluez + gatttool on the phone.",
-   "file": "packages/jwlink-1.0.0.tar.gz",
-   "sha256": "15aa1d5abe9df08658f1e570427718e5e4d3eaf9c37e0165efbb9a9280eefc8c",
-   "size": 7254
+   "long": "Scan for and connect to your JWatch over Bluetooth Low Energy, sync the time, find the watch, set Do Not Disturb, rename it and read battery, steps and firmware. Uses jgmDeb's built-in Bluetooth LE stack.",
+   "file": "packages/jwlink-1.1.0.tar.gz",
+   "sha256": "4a0428528e56ee9624d981ec4419692278bcd0186d478371c5543889d3397017",
+   "size": 6854
   }
  ],
  "system": {
-  "version": "1.0.0",
-  "file": "packages/jgmdeb-system-1.0.0.tar.gz",
-  "sha256": "c3568a5985d8d3b3e0836667494d22fba1900590a37c4fb2cb020d05da8952b0",
-  "size": 46042,
-  "notes": "First store release: Store, software updater, JWLink, icon styles, audio, news, weather, YouTube downloader."
+  "version": "1.1.0",
+  "file": "packages/jgmdeb-system-1.1.0.tar.gz",
+  "sha256": "35e36a186301eba006ff78d4562f977f87956761759aeb6175e30af7887ba87a",
+  "size": 57771,
+  "notes": "Bluetooth LE (Settings > Bluetooth), ADB over USB/WiFi (Settings > ADB), 12 UI themes + 8 icon styles + corner radius everywhere, text web browser with bookmarks, JWLink 1.1.0 on the new Bluetooth stack."
  }
 }

@@ -1,5 +1,5 @@
 """JWLink for jgmDeb: talks to the JWatch over Bluetooth LE using bluez's gatttool/hcitool. `shell` is injected by the jgmDeb app loader."""
-import os, re, json, shutil, subprocess, threading, time
+import os, re, json, threading, time
 import protocol as P
 
 SAVE = None
@@ -12,37 +12,20 @@ def store(o):
     except Exception: pass
 
 class Bt:
-    """gatttool wrapper: read/write a characteristic by UUID (handles looked up once per connection)"""
-    def __init__(self, addr): self.addr = addr; self.handles = {}
+    """one LE connection per operation, through jgmDeb's user-space Bluetooth stack (shell.jgmble)"""
+    def __init__(self, addr, atype=0): self.addr = addr; self.atype = atype
     @staticmethod
-    def available(): return os.path.exists('/sys/class/bluetooth/hci0') and bool(shutil.which('gatttool'))
-    def run(self, args, t=15):
-        return subprocess.run(['gatttool', '-b', self.addr] + args, capture_output=True, text=True, timeout=t)
-    def map(self):
-        if self.handles: return
-        r = self.run(['--characteristics']).stdout
-        for m in re.finditer(r'char value handle = (0x[0-9a-f]+), uuid = ([0-9a-f-]+)', r): self.handles[m.group(2).lower()] = m.group(1)
-        if not self.handles: raise IOError('could not connect')
-    def read(self, uuid):
-        self.map(); h = self.handles.get(uuid)
-        if not h: raise IOError('not on this watch')
-        out = self.run(['--char-read', '-a', h]).stdout
-        m = re.search(r'value:\s*([0-9a-f ]+)', out)
-        if not m: raise IOError('read failed')
-        return bytes.fromhex(m.group(1).replace(' ', ''))
-    def write(self, uuid, data):
-        self.map(); h = self.handles.get(uuid)
-        if not h: raise IOError('not on this watch')
-        r = self.run(['--char-write-req', '-a', h, '-n', data.hex()])
-        if 'successfully' not in r.stdout: raise IOError('write failed')
+    def available(): return shell.bt_available()
+    def run(self, fn):
+        b = shell.jgmble.get(); b.connect(self.addr, self.atype, 10)
+        try: return fn(b)
+        finally: b.disconnect()
+    def read(self, uuid): return self.run(lambda b: b.read(uuid))
+    def write(self, uuid, data): return self.run(lambda b: b.write(uuid, data))
 
 def scan(seconds=8):
-    r = subprocess.run(['timeout', '-s', 'INT', str(seconds), 'hcitool', 'lescan'], capture_output=True, text=True)
-    seen = {}
-    for l in r.stdout.splitlines():
-        m = re.match(r'([0-9A-F:]{17}) (.*)', l.strip())
-        if m and (m.group(2) != '(unknown)' or m.group(1) not in seen): seen[m.group(1)] = m.group(2)
-    return seen
+    found = shell.jgmble.get().scan(seconds)
+    return {a: (v['name'], v['type']) for a, v in found.items()}
 
 class JWLink(shell.App):
     title = 'JWLink'; left = 'Menu'; tick = 1
@@ -58,31 +41,33 @@ class JWLink(shell.App):
             self.busy = False
         if not self.busy: threading.Thread(target=run, daemon=True).start()
     def options(self):
-        if not Bt.available(): return [('Info', lambda: ('popopen', shell.TextBox('JWLink', 'This phone build has no working Bluetooth yet (needs an hci0 adapter plus the bluez package). JWLink is installed and ready for when it does.')))]
+        if not Bt.available(): return [('Info', lambda: ('popopen', shell.TextBox('JWLink', 'Bluetooth is not available. It needs the WiFi/WCNSS firmware started (it is at boot) and this jgmDeb version or newer.')))]
         o = [('Scan for watch', self.do_scan)]
         if self.addr(): o += [('Sync time', lambda: self.act('Syncing time', self.sync)), ('Find my watch', lambda: self.act('Ringing watch', lambda: self.bt().write(P.U['ALERT_LEVEL'], P.FIND_WATCH) or 'Watch alerted')),
                               ('Refresh info', lambda: self.act('Reading', self.refresh)), ('Do not disturb', self.dnd_menu), ('Rename watch', lambda: ('popopen', shell.Editor('Watch name', self.cfg.get('name', ''), on_done=lambda n: self.act('Renaming', lambda: self.bt().write(P.U['WATCH_NAME'], P.ascii_bytes(n, 20)) or 'Renamed')))),
                               ('Forget watch', self.forget)]
         return o
-    def bt(self): return Bt(self.addr())
+    def bt(self): return Bt(self.addr(), self.cfg.get('atype', 0))
     def act(self, label, fn): self.job(label, fn); return 'popback'
     def do_scan(self):
         def work():
             found = scan(8)
             if not found: return 'No devices found'
-            items = [('%s  %s' % (n or '?', a), (lambda a=a, n=n: self.choose(a, n))) for a, n in found.items()]
+            items = [('%s  %s' % (n or '?', a), (lambda a=a, n=n, t=t: self.choose(a, n, t))) for a, (n, t) in sorted(found.items(), key=lambda kv: (not kv[1][0], kv[0]))]
             self.pending = ('open', shell.Popup('Pick your watch', items)); return '%d devices' % len(found)
         self.pending = None; self.job('Scanning', work); return 'popback'
-    def choose(self, a, n): self.cfg.update(addr=a, name=n); store(self.cfg); self.msg = 'Saved ' + (n or a); return 'popback'
+    def choose(self, a, n, t=0): self.cfg.update(addr=a, name=n, atype=t); store(self.cfg); self.msg = 'Saved ' + (n or a); return 'popback'
     def forget(self): self.cfg = {}; store(self.cfg); self.info = {}; self.msg = 'Forgotten'; return 'popback'
     def sync(self):
-        b = self.bt(); b.write(P.U['CURRENT_TIME'], P.current_time()); b.write(P.U['LOCAL_TIME_INFO'], P.local_time_info()); return 'Time synced'
+        self.bt().run(lambda b: (b.write(P.U['CURRENT_TIME'], P.current_time()), b.write(P.U['LOCAL_TIME_INFO'], P.local_time_info()))); return 'Time synced'
     def refresh(self):
-        b = self.bt(); info = {}
-        for k, u, f in (('battery', 'BATTERY_LEVEL', P.parse_battery), ('firmware', 'FIRMWARE_REVISION', P.parse_firmware), ('steps', 'STEP_COUNT', P.parse_steps)):
-            try: info[k] = f(b.read(P.U[u]))
-            except Exception: pass
-        self.info = info; return 'Updated'
+        def go(b):
+            info = {}
+            for k, u, f in (('battery', 'BATTERY_LEVEL', P.parse_battery), ('firmware', 'FIRMWARE_REVISION', P.parse_firmware), ('steps', 'STEP_COUNT', P.parse_steps)):
+                try: info[k] = f(b.read(P.U[u]))
+                except Exception: pass
+            return info
+        self.info = self.bt().run(go); return 'Updated'
     def dnd_menu(self): return ('popopen', shell.Popup('Do not disturb', [(n, (lambda m=i, n=n: self.act('Setting', lambda: self.bt().write(P.U['DND'], P.dnd_value(m)) or 'DND ' + n))) for i, n in enumerate(P.DND_NAMES)]))
     def draw(self, d, img):
         shell.ctext(d, shell.W / 2, 44, 'JWLink', shell.font(24, True), shell.ACC)
