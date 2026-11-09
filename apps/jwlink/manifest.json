@@ -1,0 +1,4 @@
+{"id": "jwlink", "name": "JWLink", "version": "1.0.0", "author": "jgm240", "color": [60, 110, 200],
+ "description": "Companion app for the JWatch (Bluetooth LE)",
+ "long": "Scan for and connect to your JWatch, sync the time, find the watch, set Do Not Disturb, rename it and read battery, heart rate, steps and firmware. Needs a working Bluetooth adapter (hci0) with bluez + gatttool on the phone.",
+ "entry": "app.py", "factory": "make"}
