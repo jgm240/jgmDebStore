@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.1",
-  "file": "packages/jgmdeb-system-1.3.1.tar.gz",
-  "sha256": "eb31623e6c53399024a6f969551a2effa7e6dc2d5bb2fb1da4bbd0d045b5b5bc",
-  "size": 70041,
-  "notes": "Nightstand: choose when it turns on (set times, or whenever locked while charging) - Settings > Display > Nightstand clock."
+  "version": "1.3.2",
+  "file": "packages/jgmdeb-system-1.3.2.tar.gz",
+  "sha256": "2a37ea078f65242b8298b427be1d5b820e12ff82c579b4c3447cccac19ce101f",
+  "size": 70173,
+  "notes": "Fix: adb shell / Terminal / ssh could fail after a reboot (stale pty mount); adbd repairs it itself."
  }
 }

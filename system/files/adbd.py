@@ -40,8 +40,15 @@ class Stream:
             self.conn.streams.pop(self.local, None)
 
 # ---------------------------------------------------------------------------------------------------------------- services
+def ensure_pty():
+    """the devpts mount inherited from the initramfs can go stale (openpty fails): remount it and recreate /dev/ptmx"""
+    try: os.close(os.openpty()[0]); return
+    except Exception: pass
+    subprocess.call('umount /dev/pts 2>/dev/null; mount -t devpts devpts /dev/pts; rm -f /dev/ptmx; mknod -m 666 /dev/ptmx c 5 2', shell=True)
+
 def svc_shell(st, cmd):
     import pty
+    if not cmd: ensure_pty()
     if cmd:
         p = subprocess.Popen(['/bin/bash', '-c', cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=ENV, cwd='/root'); rfd = p.stdout.fileno(); wfd = p.stdin.fileno()
     else:

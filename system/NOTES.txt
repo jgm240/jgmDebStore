@@ -1,1 +1,1 @@
-Nightstand: choose when it turns on (set times, or whenever locked while charging) - Settings > Display > Nightstand clock.
+Fix: adb shell / Terminal / ssh could fail after a reboot (stale pty mount); adbd repairs it itself.
