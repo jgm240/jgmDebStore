@@ -28,13 +28,16 @@ def _addr_id(node, port):                    # struct sockaddr_msm_ipc: family u
     return struct.pack('<H2xB3xIIB3x', AF_MSM_IPC, 2, node, port, 0)       # 20 bytes
 
 class QMI:
-    def __init__(self, service, timeout=5.0):
-        self.service = service; self.txn = 0; self.timeout = timeout; self.lock = threading.Lock(); self.sock = None; self.ind = []
+    def __init__(self, service, timeout=5.0, addr=None):
+        """addr=(node, port) skips the router lookup ioctl, which can block in the kernel while the modem is up: use servers() to find it"""
+        self.service = service; self.txn = 0; self.timeout = timeout; self.lock = threading.Lock(); self.sock = None; self.ind = []; self.addr = addr
         self.connect()
     def connect(self):
-        srv = lookup(service=self.service)
-        if not srv: raise OSError('QMI service 0x%x not found' % self.service)
-        self.node, self.port = srv[0][0], srv[0][1]
+        if self.addr: self.node, self.port = self.addr
+        else:
+            srv = lookup(service=self.service)
+            if not srv: raise OSError('QMI service 0x%x not found' % self.service)
+            self.node, self.port = srv[0][0], srv[0][1]
         self.sock = socket.socket(AF_MSM_IPC, socket.SOCK_DGRAM, 0); self.sock.settimeout(self.timeout)
     def _send(self, data):
         a = _addr_id(self.node, self.port)
@@ -76,4 +79,14 @@ def parse_tlvs(b):
     out = {}; i = 0
     while i + 3 <= len(b):
         t, ln = struct.unpack_from('<BH', b, i); out[t] = bytes(b[i + 3:i + 3 + ln]); i += 3 + ln
+    return out
+
+
+def servers():
+    """{service id: (node, port)} read from the router's debugfs (safe while the modem is running)"""
+    import re, subprocess
+    if not os.path.exists('/sys/kernel/debug/msm_ipc_router'): subprocess.call('mount -t debugfs none /sys/kernel/debug 2>/dev/null', shell=True)
+    t = open('/sys/kernel/debug/msm_ipc_router/dump_servers').read(); out = {}
+    for sv, inst, node, port in re.findall(r'Service: 0x([0-9a-f]+)\s+Instance: 0x([0-9a-f]+)\s+Node_id: 0x([0-9a-f]+)\s+Port_id: 0x([0-9a-f]+)', t):
+        if int(node, 16) == 0: out.setdefault(int(sv, 16), (int(node, 16), int(port, 16)))      # node 0 = the modem
     return out

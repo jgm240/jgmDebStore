@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated": "2026-11-09",
+ "updated": "2026-11-10",
  "apps": [
   {
    "id": "jwlink",
@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.1.0",
-  "file": "packages/jgmdeb-system-1.1.0.tar.gz",
-  "sha256": "35e36a186301eba006ff78d4562f977f87956761759aeb6175e30af7887ba87a",
-  "size": 57771,
-  "notes": "Bluetooth LE (Settings > Bluetooth), ADB over USB/WiFi (Settings > ADB), 12 UI themes + 8 icon styles + corner radius everywhere, text web browser with bookmarks, JWLink 1.1.0 on the new Bluetooth stack."
+  "version": "1.2.0",
+  "file": "packages/jgmdeb-system-1.2.0.tar.gz",
+  "sha256": "4e656ad29b6af81e1ea8e442f76d0a3c61b74bd92c3fdd58983962f7020a8c7d",
+  "size": 65066,
+  "notes": "SIM contacts import (Contacts > Options), voice calls (dial, answer, hang up, incoming, missed-call notification), SIM + modem bring-up (jgmsim, jgmvoice), call audio routing."
  }
 }

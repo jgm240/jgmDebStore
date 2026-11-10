@@ -342,18 +342,81 @@ class Phone(App):
             else: return 'back'
         elif k == 'END': return 'back'
         elif k in ('CALL', 'OK'): return ('open', Calling(self.num)) if self.num else None
+try: import jgmvoice, jgmsim
+except Exception: jgmvoice = jgmsim = None
+CALL_ANSWERED = set()
+def contact_name(num):
+    n = re.sub(r'[^0-9+]', '', num or '')
+    for c in jload('contacts.json', []):
+        if n and re.sub(r'[^0-9+]', '', c['number'])[-8:] == n[-8:]: return c['name']
+    return ''
 class Calling(App):
+    """A voice call: outgoing (dials through the modem) or an answered incoming call (cid given). END hangs up, OK toggles speaker, digits send DTMF."""
     title = 'Call'; right = 'End'; tick = 1
-    def __init__(self, num):
-        self.num = num; self.t0 = time.time(); self.state = 'Dialing...'; self.err = ''
-        jsave('calls.json', (jload('calls.json', []) + [{'n': num, 't': time.time(), 'dir': 'out'}])[-50:])
+    def __init__(self, num, cid=None):
+        self.num = num; self.cid = cid; self.t0 = None; self.state = 'Dialing...' if cid is None else 'Connecting...'; self.err = ''; self.speaker = False; self.finished = False; self.finished_at = 0; self.audio = False
+        if cid is None: jsave('calls.json', (jload('calls.json', []) + [{'n': num, 't': time.time(), 'dir': 'out'}])[-50:])
+        threading.Thread(target=self.run, daemon=True).start()
+    def finish(self, text):
+        self.state = text; self.finished = True; self.finished_at = time.time() + 2
+        if self.audio: jgmvoice.audio('off'); self.audio = False
+    def run(self):
+        try:
+            if jgmvoice is None: self.err = 'Voice support missing'; return self.finish('Failed')
+            if not jgmsim.modem_up(): self.err = 'The modem is off. Settings > Modem / audio > Start modem.'; return self.finish('No modem')
+            if self.cid is None:
+                st = jgmsim.setup(25)
+                if not st['ok']: self.err = st['why']; return self.finish('No SIM')
+                if not st.get('registered'): self.err = 'No network yet'; return self.finish('No network')
+                jgmvoice.register(); self.cid = jgmvoice.dial(self.num)
+            seen = False; started = time.time()
+            while not self.finished:
+                time.sleep(1); cs = {c['id']: c for c in jgmvoice.calls()}; c = cs.get(self.cid)
+                if not c:
+                    if seen or time.time() - started > 8: return self.finish('Call ended')
+                    continue
+                seen = True; name = c['state_name']
+                if c['state'] == 3 and self.t0 is None: self.t0 = time.time(); self.state = 'Connected'; jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
+                elif c['state'] != 3: self.state = {1: 'Dialing...', 5: 'Ringing...', 10: 'Dialing...', 8: 'Ending...'}.get(c['state'], name)
+        except Exception as e: self.err = str(e)[:60]; self.finish('Call failed')
     def draw(self, d, img):
-        ctext(d, W / 2, 70, self.num, font(24, True), FG)
-        ctext(d, W / 2, 120, self.state, font(16), ACC)
-        for i, l in enumerate(wrap(d, self.err or 'Voice calls need the modem and audio bring-up.', font(12), W - 20)): ctext(d, W / 2, 170 + i * 15, l, font(12), WARN)
+        nm = contact_name(self.num); ctext(d, W / 2, 56, nm or self.num, font(22, True), FG)
+        if nm: ctext(d, W / 2, 86, self.num, font(13), DIM)
+        txt = self.state if self.t0 is None else '%02d:%02d' % divmod(int(time.time() - self.t0), 60)
+        ctext(d, W / 2, 120, txt, font(26 if self.t0 else 16, True), ACC)
+        if self.t0: ctext(d, W / 2, 160, 'Speaker ' + ('on' if self.speaker else 'off') + '  (OK)', font(12), DIM)
+        for i, l in enumerate(wrap(d, self.err, font(12), W - 20)): ctext(d, W / 2, 190 + i * 15, l, font(12), WARN)
     def key(self, k):
-        if k == 'CALL' and self.state != 'Connected': self.state = 'Connected'; self.t0 = time.time()
-        return 'back' if k in ('RSK', 'END') else None
+        if k in ('RSK', 'END'):
+            if self.cid is not None and jgmvoice: threading.Thread(target=lambda: jgmvoice.hangup(self.cid), daemon=True).start()
+            if self.audio: jgmvoice.audio('off')
+            return 'back'
+        if k == 'OK' and self.t0: self.speaker = not self.speaker; jgmvoice.audio('speaker' if self.speaker else 'handset')
+        elif len(k) == 1 and k in '0123456789*#' and self.t0 and self.cid is not None: threading.Thread(target=lambda: jgmvoice.send_dtmf(self.cid, k), daemon=True).start()
+class IncomingCall(App):
+    title = 'Incoming call'; left = 'Answer'; right = 'Decline'; tick = 1
+    def __init__(self, call): self.call = call; self.finished = False; self.finished_at = 0; self.t = time.time()
+    def draw(self, d, img):
+        nm = contact_name(self.call['number']); ctext(d, W / 2, 56, nm or self.call['number'] or 'Unknown', font(22, True), FG)
+        if nm: ctext(d, W / 2, 86, self.call['number'], font(13), DIM)
+        ctext(d, W / 2, 130, 'Incoming call', font(16), ACC if int(time.time() * 2) % 2 else FG)
+        ctext(d, W / 2, 170, 'CALL / slide open = answer', font(11), DIM); ctext(d, W / 2, 188, 'END = decline', font(11), DIM)
+    def answer(self):
+        CALL_ANSWERED.add(self.call['id'])
+        try: jgmvoice.answer(self.call['id'])
+        except Exception: pass
+        return ('replace', Calling(self.call['number'], self.call['id']))
+    def key(self, k):
+        if k in ('LSK', 'CALL', 'OK'): return self.answer()
+        if k in ('RSK', 'END'):
+            threading.Thread(target=lambda: jgmvoice.hangup(self.call['id']), daemon=True).start(); CALL_ANSWERED.add(-self.call['id']); return 'back'
+INCOMING = []; ENDED = set()
+def on_incoming_call(c): INCOMING.append(c)
+def on_call_end(c):
+    ENDED.add(c['id'])
+    if c['dir'] == 'in' and c['id'] not in CALL_ANSWERED and -c['id'] not in CALL_ANSWERED and c['state'] != 3:
+        jsave('calls.json', (jload('calls.json', []) + [{'n': c['number'], 't': time.time(), 'dir': 'in', 'seen': False}])[-50:]); notify('Missed call', contact_name(c['number']) or c['number'])
+    CALL_ANSWERED.discard(c['id']); CALL_ANSWERED.discard(-c['id'])
 class CallLog(App):
     title = 'Call log'
     def draw(self, d, img):
@@ -404,10 +467,45 @@ class NewContact(App):
                 return 'back'
         elif k in ('RSK', 'END'): return 'back'
 class SimImport(App):
-    title = 'SIM contacts'
-    def __init__(self, cb): self.cb = cb
+    """Import the contacts stored on the SIM card (ADN) through the modem."""
+    title = 'SIM contacts'; left = ''; tick = 1
+    def __init__(self, cb):
+        self.cb = cb; self.msg = 'Starting...'; self.found = []; self.new = []; self.done = False; self.pin = None
+        threading.Thread(target=self.work, daemon=True).start()
+    @staticmethod
+    def norm(n): return re.sub(r'[^0-9+]', '', n or '')
+    def work(self):
+        try:
+            import jgmsim
+            if not jgmsim.modem_up():
+                self.msg = 'Starting the modem...'; subprocess.Popen('sh /opt/jgm/modem-up.sh', shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                for _ in range(40):
+                    time.sleep(3)
+                    if jgmsim.modem_up(): break
+                else: self.msg = 'The modem did not start'; return
+            self.msg = 'Reading the SIM...'; st = jgmsim.setup(30)
+            if not st['ok']:
+                self.msg = st['why'] + (' (%s tries left)' % st.get('pin_retries', '?') if st.get('pin_retries') is not None else ''); self.need_pin = st['why'] == 'PIN required'; return
+            self.found = jgmsim.read_adn(); have = {self.norm(c['number']) for c in jload('contacts.json', [])}
+            self.new = [(n, num) for n, num in self.found if self.norm(num) not in have]
+            self.msg = '%d on the SIM, %d new' % (len(self.found), len(self.new)); self.done = True
+        except Exception as e: self.msg = 'Failed: ' + str(e)[:50]
     def draw(self, d, img):
-        for i, l in enumerate(wrap(d, 'Reading the SIM needs the modem. Not available yet.', font(14), W - 20)): d.text((10, 40 + i * 20), l, font=font(14), fill=WARN)
+        for i, l in enumerate(wrap(d, self.msg, font(15, True), W - 20)): d.text((10, 36 + i * 22), l, font=font(15, True), fill=ACC if self.done else FG)
+        for i, (n, num) in enumerate(self.new[:7]): d.text((10, 90 + i * 22), fit(d, n + '  ' + num, font(13), W - 20), font=font(13), fill=FG)
+        if len(self.new) > 7: d.text((10, 90 + 7 * 22), '+ %d more' % (len(self.new) - 7), font=font(12), fill=DIM)
+        if self.done and self.new: ctext(d, W / 2, H - 52, 'OK = import %d contacts' % len(self.new), font(13, True), ACC)
+        elif self.done: ctext(d, W / 2, H - 52, 'Nothing new to import', font(13), DIM)
+    def key(self, k):
+        if k == 'OK' and self.done and self.new:
+            cs = jload('contacts.json', []); cs += [{'name': n or num, 'number': num} for n, num in self.new]; jsave('contacts.json', cs); self.cb()
+            notify('SIM contacts imported', '%d contacts' % len(self.new)); self.new = []; self.msg = 'Imported!'
+        elif k == 'OK' and getattr(self, 'need_pin', False):
+            def pin_done(pin):
+                import jgmsim
+                ok, err = jgmsim.verify_pin(pin); self.need_pin = False; self.msg = 'Starting...'; threading.Thread(target=self.work, daemon=True).start() if ok else setattr(self, 'msg', 'Wrong PIN')
+            return ('open', Editor('SIM PIN', '', numeric=True, on_done=pin_done))
+        elif k in ('RSK', 'END'): return 'back'
 class Compose(App):
     title = 'New message'; left = 'Send'
     def __init__(self, to=''): self.to = to; self.body = ''
@@ -1742,11 +1840,17 @@ def main():
     screen(True)
     if STATE['slider_closed'] and CFG['slider_lock'] and CFG['setup_done']: lock(); screen(False)
     threading.Thread(target=check_updates_bg, daemon=True).start()
+    if jgmvoice: jgmvoice.Watcher(on_incoming_call, on_call_end).start()
     dirty = True; last_tick = 0; last_alarm = 0; last_batt = 0; battery()
     if CFG.get('governor'): BATT.governor(CFG['governor'])
     while True:
         now = time.time()
         if S.get('unseen') and not S['on']: wr('/sys/class/leds/red/brightness', 60 if int(now * 1.5) % 3 == 0 else 0)
+        while INCOMING:
+            c = INCOMING.pop(0)
+            if not isinstance(stack[-1], (Calling, IncomingCall)): screen(True); S['locked'] = False; S['last'] = now; stack.append(IncomingCall(c)); dirty = True
+        if isinstance(stack[-1], (Calling, IncomingCall)) and stack[-1].finished and now >= stack[-1].finished_at: stack.pop(); dirty = True
+        if isinstance(stack[-1], IncomingCall) and stack[-1].call['id'] in ENDED: ENDED.discard(stack[-1].call['id']); stack.pop(); dirty = True
         if now - last_batt > 5:
             last_batt = now; BATT.update(); BATT.charge_led(BATT.charging and not S['on'])
             S['unseen'] = len(unseen_notifs())
@@ -1771,8 +1875,8 @@ def main():
             if k in ('SLIDE_CLOSE', 'SLIDE_OPEN'):
                 if not CFG.get('slider_enabled', True): continue
                 STATE['slider_closed'] = (k == 'SLIDE_CLOSE'); dirty = True
-                if CFG.get('slider_calls', True) and isinstance(stack[-1], Calling) and not S['locked']:      # slide open = answer, slide closed = hang up
-                    handle(stack, stack[-1].key('CALL' if k == 'SLIDE_OPEN' else 'END')); continue
+                if CFG.get('slider_calls', True) and isinstance(stack[-1], (Calling, IncomingCall)):      # slide open = answer, slide closed = hang up / decline
+                    screen(True); S['locked'] = False; handle(stack, stack[-1].key('CALL' if k == 'SLIDE_OPEN' else 'END')); continue
                 if STATE['slider_closed'] and CFG['slider_lock']: lock(); screen(False)
                 elif not STATE['slider_closed']:
                     screen(True); S['last'] = time.time()
