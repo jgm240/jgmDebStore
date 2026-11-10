@@ -102,6 +102,10 @@ def g_alarm(d, s, base):
 def g_bt(d, s):
     pts = [(34, 34), (66, 66), (50, 82), (50, 18), (66, 34), (34, 66)]
     d.line(P(s, pts), fill=WHITE, width=int(7 * s), joint='curve')
+def g_moon(d, s):
+    d.ellipse(R(s, (18, 14, 82, 78)), fill=WHITE); d.ellipse(R(s, (36, 6, 100, 70)), fill=DARK)
+    for x, y, r in ((74, 30, 3), (84, 52, 2), (60, 14, 2)): d.ellipse(R(s, (x - r, y - r, x + r, y + r)), fill=WHITE)
+    d.rounded_rectangle(R(s, (24, 80, 60, 88)), int(3 * s), fill=WHITE)
 def g_store(d, s):
     d.polygon(P(s, [(24, 36), (76, 36), (80, 86), (20, 86)]), fill=WHITE)
     d.arc(R(s, (34, 14, 66, 52)), 180, 360, fill=WHITE, width=int(5 * s))
@@ -139,7 +143,7 @@ ICONS = {
     'snake': (g_snake, (100, 214, 110), (30, 140, 70)), 'camera': (g_camera, (220, 110, 110), (170, 50, 70)), 'music': (g_music, (170, 130, 240), (110, 70, 210)),
     'wifi': (g_wifi, (100, 180, 250), (40, 110, 220)), 'voicemail': (g_voicemail, (136, 146, 250), (80, 90, 220)), 'monitor': (g_monitor, (60, 80, 100), (24, 34, 46)),
     'battery': (g_battery, (110, 224, 140), (40, 170, 90)), 'alarm': (g_alarm, (255, 150, 120), (226, 80, 70)),
-    'bluetooth': (g_bt, (70, 120, 230), (40, 80, 200)), 'store': (g_store, (70, 140, 220), (40, 100, 200)), 'news': (g_news, (240, 120, 100), (200, 60, 70)), 'weather': (g_weather, (90, 170, 245), (40, 100, 210)), 'ytdl': (g_ytdl, (240, 80, 80), (190, 30, 50)),
+    'bluetooth': (g_bt, (70, 120, 230), (40, 80, 200)), 'nightstand': (g_moon, (70, 60, 150), (30, 26, 90)), 'store': (g_store, (70, 140, 220), (40, 100, 200)), 'news': (g_news, (240, 120, 100), (200, 60, 70)), 'weather': (g_weather, (90, 170, 245), (40, 100, 210)), 'ytdl': (g_ytdl, (240, 80, 80), (190, 30, 50)),
     'notifs': (g_bell, (255, 190, 80), (235, 120, 40)), 'radio': (g_radio, (110, 200, 190), (40, 140, 140)), 'hotspot': (g_share, (120, 210, 150), (40, 150, 100))}
 _NEEDS_BASE = {'news', 'radio', 'messages', 'settings', 'clock', 'calc', 'browser', 'notes', 'files', 'terminal', 'calendar', 'torch', 'snake', 'camera', 'music', 'wifi', 'voicemail', 'monitor', 'battery', 'alarm'}
 
@@ -147,7 +151,7 @@ _NEEDS_BASE = {'news', 'radio', 'messages', 'settings', 'clock', 'calc', 'browse
 import numpy as np
 THEMES = ['normal', 'dark', 'metal', 'wood', 'paper', 'glass', 'neon', 'mono']
 RADII = [0.0, 0.12, 0.24, 0.36, 0.5]                       # fraction of the icon size: square .. circle
-COL = {'bluetooth': (60, 110, 225), 'store': (70, 140, 220), 'phone': (52, 168, 110), 'contacts': (66, 128, 196), 'messages': (236, 160, 60), 'settings': (112, 120, 132), 'clock': (214, 88, 84), 'calc': (140, 100, 190),
+COL = {'nightstand': (84, 72, 170), 'bluetooth': (60, 110, 225), 'store': (70, 140, 220), 'phone': (52, 168, 110), 'contacts': (66, 128, 196), 'messages': (236, 160, 60), 'settings': (112, 120, 132), 'clock': (214, 88, 84), 'calc': (140, 100, 190),
        'browser': (60, 160, 190), 'notes': (226, 186, 70), 'files': (122, 160, 92), 'terminal': (46, 54, 62), 'calendar': (214, 70, 92), 'torch': (230, 150, 50),
        'snake': (80, 170, 90), 'camera': (190, 80, 92), 'music': (140, 100, 200), 'wifi': (70, 140, 210), 'voicemail': (110, 120, 220), 'monitor': (52, 72, 92),
        'battery': (80, 180, 112), 'alarm': (230, 110, 90), 'news': (200, 80, 80), 'weather': (80, 150, 225), 'ytdl': (210, 50, 60), 'notifs': (232, 150, 60),

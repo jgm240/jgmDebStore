@@ -1,1 +1,1 @@
-SIM contacts import (Contacts > Options), voice calls (dial, answer, hang up, incoming, missed-call notification), SIM + modem bring-up (jgmsim, jgmvoice), call audio routing.
+Nightstand clock (6 animated styles, portrait + both landscape directions, dimmed backlight, auto mode while charging at night).

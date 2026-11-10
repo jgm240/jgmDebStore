@@ -7,7 +7,7 @@ full frame, so we redraw only when something changed (never faster than ~8 fps).
 Keys (evdev matrix_keypad): 1..9 0 * #   LSK (KEY_MENU)  RSK (KEY_BACK)  D-pad  OK  CALL (KEY_SEND)  END (power key)
 Soft keys everywhere: LEFT soft = options for the current screen (when it shows a label), RIGHT soft = back / clear.
 """
-import threading, os, sys, time, struct, mmap, fcntl, glob, json, select, datetime, subprocess, traceback, random, pty, signal
+import math, threading, os, sys, time, struct, mmap, fcntl, glob, json, select, datetime, subprocess, traceback, random, pty, signal
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 try:
@@ -824,6 +824,7 @@ def make_settings():
     display = ListMenu('Display', [('Brightness', lambda: (rd(bl_path() or '') or 'n/a'), lambda: bright()), ('Theme', lambda: UI_THEMES[CFG.get('ui_theme', 0) % len(UI_THEMES)][0], theme_t),
                                    ('Accent colour', lambda: ACCENTS[CFG['accent'] % len(ACCENTS)][0], accent), ('Text size', lambda: ['', 'Normal', 'Large', 'Huge'][CFG['fontscale']], fscale),
                                    ('Icon style', lambda: ICON_STYLES[CFG.get('icon_theme', 0) % len(ICON_STYLES)].title(), lambda: (CFG.__setitem__('icon_theme', (CFG.get('icon_theme', 0) + 1) % len(ICON_STYLES)), save_cfg())[1]),
+                                   ('Nightstand when charging', lambda: 'On' if CFG.get('ns_auto') else 'Off', lambda: (CFG.__setitem__('ns_auto', not CFG.get('ns_auto')), save_cfg())[1]),
                                    ('Wallpaper', lambda: CFG.get('wall', 'auto').title(), lambda: (CFG.__setitem__('wall', {'auto': 'gradient', 'gradient': 'flat', 'flat': 'auto'}.get(CFG.get('wall', 'auto'), 'auto')), save_cfg())[1]),
                                    ('Corner radius', lambda: ['Square', 'Small', 'Medium', 'Large', 'Round'][CFG.get('radius', 2)], lambda: (CFG.__setitem__('radius', (CFG.get('radius', 2) + 1) % 5), save_cfg())[1]),
                                    ('Clock format', lambda: '24 h' if CFG['clock24'] else '12 h', clk), ('Screen timeout', lambda: ('%ds' % CFG['timeout']) if CFG['timeout'] else 'never', tout)])
@@ -1739,6 +1740,147 @@ class BluetoothApp(PickList):
                     except Exception: pass
             self.msg = 'Connecting...'; threading.Thread(target=work, daemon=True).start(); return 'popback'
         return ('open', Popup(v['name'] or addr, [('Connect and read info', probe), ('Cancel', lambda: 'popback')]))
+# --------------------------------------------------------------------------------------------- Nightstand clock
+from PIL import ImageFilter
+_bf = {}
+def bigfont(size, bold=True):
+    k = (size, bold)
+    if k not in _bf: _bf[k] = ImageFont.truetype(FDIR + ('DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf'), size)
+    return _bf[k]
+NS_STYLES = ['Flip', 'Analog', 'Night sky', 'Matrix', 'Breathe', 'LED']
+NS_LEVELS = [3, 8, 18, 40, 90]
+NS_COLORS = ['Accent', 'Red', 'Amber', 'White']
+SEG = {'0': 'abcdef', '1': 'bc', '2': 'abdeg', '3': 'abcdg', '4': 'bcfg', '5': 'acdfg', '6': 'acdefg', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg'}
+class NightClock(App):
+    """Dim bedside clock: six animated styles, portrait or landscape (either way up), alarm aware.
+    LEFT/RIGHT style - UP/DOWN brightness - 1 orientation - * colour - OK show/hide details - END/RSK exit"""
+    title = ''; left = ''; right = ''
+    def __init__(self):
+        self.style = CFG.get('ns_style', 0) % len(NS_STYLES); self.orient = CFG.get('ns_orient', 0) % 3; self.color = CFG.get('ns_color', 0) % 4; self.level = CFG.get('ns_level', 1) % 5; self.info = True
+        rnd = random.Random(7); self.stars = [(rnd.random(), rnd.random(), rnd.random() * 6.3, 0.5 + rnd.random() * 1.5) for _ in range(70)]
+        self.cols = None; self.prev = None; self.flip_t0 = 0; self.meteor = None; self.msg = ''; self.msg_t = 0; self.t0 = time.time()
+        wr(LCD, NS_LEVELS[self.level]); wr(KBL, 0)
+    # ---- timing: fast redraws only while something moves
+    @property
+    def tick(self):
+        if self.style in (1, 2, 3, 4): return 0.22
+        if self.style == 0 and time.time() - self.flip_t0 < 0.7: return 0.1
+        return 1.0
+    def pal(self):
+        c = [ACC, (255, 54, 40), (255, 150, 40), (225, 225, 225)][self.color]; return c
+    def dim(self, f, base=None): c = base or self.pal(); return tuple(int(v * f) for v in c)
+    def times(self):
+        n = datetime.datetime.now(); h = n.hour if CFG['clock24'] else (n.hour % 12 or 12)
+        return n, '%02d' % h if CFG['clock24'] else str(h).rjust(2), '%02d' % n.minute
+    # ---- frame
+    def render_full(self):
+        land = self.orient != 0; Wc, Hc = (320, 240) if land else (240, 320)
+        img = Image.new('RGB', (Wc, Hc), (0, 0, 0)); d = ImageDraw.Draw(img)
+        getattr(self, 'draw_' + ['flip', 'analog', 'sky', 'matrix', 'breathe', 'led'][self.style])(d, img, Wc, Hc)
+        if self.info: self.draw_info(d, Wc, Hc)
+        if self.msg and time.time() - self.msg_t < 2: ctext(d, Wc / 2, 6, self.msg, font(12, True), self.dim(0.8))
+        return img.rotate(90 if self.orient == 1 else -90, expand=True) if land else img
+    def draw_info(self, d, Wc, Hc):
+        n = datetime.datetime.now(); parts = [n.strftime('%a %d %b')]
+        a = CFG.get('alarm', {})
+        if a.get('on'): parts.append('alarm %02d:%02d' % (a['h'], a['m']))
+        cap, st, _ = battery(); parts.append(cap + '%' + (' +' if st.lower().startswith('charg') else ''))
+        ctext(d, Wc / 2, Hc - 22, '   '.join(parts), font(12), self.dim(0.5))
+    # ---- 1. flip clock
+    def card(self, ch, w, h, f):
+        im = Image.new('RGB', (w, h), (0, 0, 0)); dd = ImageDraw.Draw(im); r = max(4, rr() * 2)
+        dd.rounded_rectangle((0, 0, w - 1, h - 1), r, fill=(26, 26, 30))
+        ft = bigfont(int(h * 0.78)); bb = dd.textbbox((0, 0), ch, font=ft); dd.text(((w - (bb[2] - bb[0])) / 2 - bb[0], (h - (bb[3] - bb[1])) / 2 - bb[1] - h * 0.02), ch, font=ft, fill=self.dim(f))
+        dd.line((0, h // 2, w, h // 2), fill=(0, 0, 0), width=3); return im
+    def draw_flip(self, d, img, Wc, Hc):
+        n, hh, mm = self.times(); cur = hh + mm; land = Wc > Hc
+        if self.prev is None: self.prev = cur
+        if cur != self.prev and time.time() - self.flip_t0 > 0.7: self.old = self.prev; self.flip_t0 = time.time(); self.prev = cur
+        cw, ch = (66, 130) if land else (46, 100); gap = 6; pair = 14
+        total = 4 * cw + 2 * gap + pair; x0 = (Wc - total) // 2; y0 = (Hc - ch) // 2 - 6
+        p = (time.time() - self.flip_t0) / 0.6 if time.time() - self.flip_t0 < 0.6 else None
+        for i in range(4):
+            x = x0 + i * (cw + gap) + (pair - gap if i >= 2 else 0); new = cur[i]; old = getattr(self, 'old', cur)[i]
+            if p is None or old == new: img.paste(self.card(new, cw, ch, 1.0), (x, y0)); continue
+            newc, oldc = self.card(new, cw, ch, 1.0), self.card(old, cw, ch, 1.0); half = ch // 2
+            img.paste(newc.crop((0, 0, cw, half)), (x, y0)); img.paste(oldc.crop((0, half, cw, ch)), (x, y0 + half))
+            if p < 0.5: hgt = max(1, int(half * (1 - p * 2))); img.paste(oldc.crop((0, 0, cw, half)).resize((cw, hgt)), (x, y0 + half - hgt))
+            else: hgt = max(1, int(half * (p * 2 - 1))); img.paste(newc.crop((0, half, cw, ch)).resize((cw, hgt)), (x, y0 + half))
+        cx = x0 + 2 * cw + gap + pair // 2 + (gap // 2) - 2
+        for dy in (-14, 14): d.ellipse((cx - 3, y0 + ch // 2 + dy - 3, cx + 3, y0 + ch // 2 + dy + 3), fill=self.dim(0.9))
+    # ---- 2. analog with a smooth sweep
+    def draw_analog(self, d, img, Wc, Hc):
+        n = datetime.datetime.now(); sec = n.second + n.microsecond / 1e6; cx, cy = Wc / 2, Hc / 2 - 8; R = min(Wc, Hc) / 2 - 22
+        d.ellipse((cx - R - 6, cy - R - 6, cx + R + 6, cy + R + 6), outline=self.dim(0.25), width=2)
+        for i in range(60):
+            a = math.radians(i * 6); r0 = R - (12 if i % 5 == 0 else 5); d.line((cx + math.sin(a) * r0, cy - math.cos(a) * r0, cx + math.sin(a) * R, cy - math.cos(a) * R), fill=self.dim(0.9 if i % 5 == 0 else 0.3), width=3 if i % 5 == 0 else 1)
+        def hand(frac, length, width, f): a = math.radians(frac * 360); d.line((cx - math.sin(a) * 12, cy + math.cos(a) * 12, cx + math.sin(a) * length, cy - math.cos(a) * length), fill=self.dim(f), width=width)
+        hand((n.hour % 12 + n.minute / 60) / 12, R * 0.5, 6, 0.95); hand((n.minute + sec / 60) / 60, R * 0.78, 4, 0.95); hand(sec / 60, R * 0.88, 1, 0.7)
+        d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=self.dim(1.0))
+    # ---- 3. night sky
+    def draw_sky(self, d, img, Wc, Hc):
+        t = time.time() - self.t0
+        for x, y, ph, sp in self.stars:
+            b = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(t * sp + ph)); v = int(200 * b); px, py = int(x * Wc), int(y * Hc)
+            d.point((px, py), fill=(v, v, v + 20));
+            if b > 0.9: d.point((px + 1, py), fill=(v // 2, v // 2, v // 2)); d.point((px, py + 1), fill=(v // 2, v // 2, v // 2))
+        mx, my = (Wc - 44, 46) if Wc > Hc else (Wc - 46, 52); d.ellipse((mx - 20, my - 20, mx + 20, my + 20), fill=(236, 232, 210)); d.ellipse((mx - 9, my - 24, mx + 31, my + 16), fill=(0, 0, 0))
+        if self.meteor is None and random.random() < 0.015: self.meteor = (random.random() * Wc * 0.6, random.random() * Hc * 0.3, t)
+        if self.meteor:
+            x, y, t1 = self.meteor; q = (t - t1) / 0.6
+            if q > 1: self.meteor = None
+            else: d.line((x + q * 90 - 30, y + q * 45 - 15, x + q * 90, y + q * 45), fill=(220, 220, 255), width=1)
+        n, hh, mm = self.times(); d.text((Wc / 2, Hc / 2 + 6), hh.strip() + ':' + mm, font=bigfont(64 if Wc < Hc else 72), fill=self.dim(0.85), anchor='mm')
+    # ---- 4. matrix rain
+    def draw_matrix(self, d, img, Wc, Hc):
+        step = 15; n_cols = Wc // step
+        if self.cols is None or len(self.cols) != n_cols: self.cols = [[random.random() * Hc, 6 + random.random() * 12, random.randint(4, 11)] for _ in range(n_cols)]
+        f = font(10, mono=True); glyphs = '0123456789ABCDEF'
+        for i, (y, sp, ln) in enumerate(self.cols):
+            for j in range(ln):
+                yy = y - j * 11
+                if 0 <= yy < Hc: d.text((i * step + 2, yy), random.choice(glyphs), font=f, fill=self.dim(1.0 if j == 0 else max(0.1, 0.6 - j * 0.09), (120, 255, 150) if self.color == 0 else None))
+            self.cols[i][0] = y + sp
+            if y - ln * 11 > Hc: self.cols[i] = [-random.random() * 80, 6 + random.random() * 12, random.randint(4, 11)]
+        n, hh, mm = self.times(); w, h = (150, 86) if Wc < Hc else (190, 90); bx, by = (Wc - w) // 2, (Hc - h) // 2 - 6
+        d.rounded_rectangle((bx, by, bx + w, by + h), max(4, rr() * 2), fill=(0, 0, 0), outline=self.dim(0.5, (120, 255, 150) if self.color == 0 else None), width=2)
+        d.text((Wc / 2, by + h / 2), hh.strip() + ':' + mm, font=bigfont(54), fill=self.dim(1.0, (170, 255, 190) if self.color == 0 else None), anchor='mm')
+    # ---- 5. breathing glow
+    def draw_breathe(self, d, img, Wc, Hc):
+        n, hh, mm = self.times(); t = time.time() - self.t0; f = 0.55 + 0.45 * math.sin(t * 2 * math.pi / 7)
+        txt = hh.strip() + ':' + mm; size = 78 if Wc < Hc else 104; layer = Image.new('L', (Wc, Hc), 0); ImageDraw.Draw(layer).text((Wc / 2, Hc / 2 - 4), txt, font=bigfont(size), fill=255, anchor='mm')
+        glow = layer.filter(ImageFilter.GaussianBlur(9)); col = self.pal()
+        base = Image.new('RGB', (Wc, Hc), tuple(int(v * 0.5 * f) for v in col)); img.paste(base, (0, 0), glow)
+        d.text((Wc / 2, Hc / 2 - 4), txt, font=bigfont(size), fill=self.dim(0.35 + 0.65 * f), anchor='mm')
+    # ---- 6. LED segments
+    def draw_led(self, d, img, Wc, Hc):
+        n, hh, mm = self.times(); land = Wc > Hc; dw, dh = (54, 104) if land else (40, 80); th = 7 if land else 6; gap = 8; colon = 22
+        total = 4 * dw + 2 * gap + colon + gap; x0 = (Wc - total) // 2; y0 = (Hc - dh) // 2 - 6
+        def digit(x, ch):
+            h2 = dh / 2; segs = {'a': (x + th, y0, x + dw - th, y0 + th), 'g': (x + th, y0 + h2 - th / 2, x + dw - th, y0 + h2 + th / 2), 'd': (x + th, y0 + dh - th, x + dw - th, y0 + dh),
+                                  'f': (x, y0 + th, x + th, y0 + h2 - 2), 'b': (x + dw - th, y0 + th, x + dw, y0 + h2 - 2), 'e': (x, y0 + h2 + 2, x + th, y0 + dh - th), 'c': (x + dw - th, y0 + h2 + 2, x + dw, y0 + dh - th)}
+            on = SEG.get(ch, '')
+            for s_, box in segs.items(): d.rounded_rectangle(box, 2, fill=self.dim(1.0) if s_ in on else self.dim(0.07))
+        s = hh + mm; xx = x0
+        for i, ch in enumerate(s):
+            digit(xx, ch if ch != ' ' else ''); xx += dw + gap
+            if i == 1:
+                lit = int(time.time()) % 2 == 0
+                for dy in (-14, 14): d.rectangle((xx + colon / 2 - 4, y0 + dh / 2 + dy - 4, xx + colon / 2 + 4, y0 + dh / 2 + dy + 4), fill=self.dim(1.0 if lit else 0.1))
+                xx += colon + gap
+    # ---- keys
+    def say(self, m): self.msg = m; self.msg_t = time.time()
+    def save(self): CFG.update(ns_style=self.style, ns_orient=self.orient, ns_color=self.color, ns_level=self.level); save_cfg()
+    def exit(self): wr(LCD, CFG['brightness']); wr(KBL, 12); return 'back'
+    def key(self, k):
+        if k == 'LEFT': self.style = (self.style - 1) % len(NS_STYLES); self.cols = None; self.say(NS_STYLES[self.style]); self.save()
+        elif k == 'RIGHT': self.style = (self.style + 1) % len(NS_STYLES); self.cols = None; self.say(NS_STYLES[self.style]); self.save()
+        elif k == 'UP': self.level = min(4, self.level + 1); wr(LCD, NS_LEVELS[self.level]); self.say('Brightness %d/5' % (self.level + 1)); self.save()
+        elif k == 'DOWN': self.level = max(0, self.level - 1); wr(LCD, NS_LEVELS[self.level]); self.say('Brightness %d/5' % (self.level + 1)); self.save()
+        elif k == '1': self.orient = (self.orient + 1) % 3; self.say(['Portrait', 'Landscape (left)', 'Landscape (right)'][self.orient]); self.save()
+        elif k == '*': self.color = (self.color + 1) % 4; self.say(NS_COLORS[self.color]); self.save()
+        elif k == 'OK': self.info = not self.info
+        elif k in ('RSK', 'END', 'LSK'): return self.exit()
 
 APP_META = [  # id, name, glyph, colour, factory
     ('voicemail', 'Voicemail', '☎', (120, 130, 240), lambda: Stub('Voicemail', ['Not available yet', 'needs the modem'])),
@@ -1751,7 +1893,7 @@ APP_META = [  # id, name, glyph, colour, factory
     ('torch', 'Flashlight', '☀', (250, 220, 100), Torch), ('snake', 'Snake', '●', (90, 210, 90), Snake),
     ('camera', 'Camera', '◉', (200, 90, 90), lambda: Stub('Camera', ['Camera not supported yet', 'needs the vendor camera stack'])),
     ('music', 'Music', '♫', (150, 110, 220), MusicApp), ('radio', 'Radio', '', (110, 200, 190), Radio), ('news', 'News', '', (240, 120, 100), FeedList), ('weather', 'Weather', '', (90, 170, 245), Weather),
-    ('store', 'Store', '', (70, 140, 220), StoreApp), ('ytdl', 'YT download', '', (240, 80, 80), YtDl), ('notifs', 'Notifications', '', (255, 190, 80), NotifApp), ('hotspot', 'Hotspot', '', (120, 210, 150), Hotspot),
+    ('nightstand', 'Nightstand', '', (60, 50, 130), NightClock), ('store', 'Store', '', (70, 140, 220), StoreApp), ('ytdl', 'YT download', '', (240, 80, 80), YtDl), ('notifs', 'Notifications', '', (255, 190, 80), NotifApp), ('hotspot', 'Hotspot', '', (120, 210, 150), Hotspot),
     ('wifi', 'WiFi', '≈', (80, 170, 240), WifiApp),
     ('monitor', 'Monitor', '', (60, 80, 100), lambda: Monitor()), ('battery', 'Battery', '', (110, 224, 140), lambda: BatteryApp()),
     ('alarm', 'Alarm', '', (255, 150, 120), lambda: AlarmApp())]
@@ -1793,6 +1935,9 @@ class Grid(App):
 
 # --------------------------------------------------------------------------------------------- main loop
 def render(app):
+    if hasattr(app, 'render_full'):
+        try: return app.render_full()
+        except Exception: traceback.print_exc()
     img = bg_image(); d = ImageDraw.Draw(img)
     try: app.draw(d, img)
     except Exception:
@@ -1861,7 +2006,8 @@ def main():
             if BATT.shutdown_due(): save_cfg(); BATT.save(now); subprocess.call('sync; poweroff', shell=True)
             if isinstance(stack[-1], (BatteryApp, Monitor, Grid)) or S['locked']: dirty = True
         app = S['lock'] if S['locked'] else stack[-1]
-        if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing)):
+        if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock)):
+            if CFG.get('ns_auto') and BATT and BATT.online and (datetime.datetime.now().hour >= 21 or datetime.datetime.now().hour < 7) and not S['locked']: stack.append(NightClock()); S['last'] = now; dirty = True; continue
             lock(); screen(False)
         if CFG['alarm']['on'] and now - last_alarm > 5:
             last_alarm = now; n = datetime.datetime.now(); a = CFG['alarm']; day = n.strftime('%Y-%m-%d')
