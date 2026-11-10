@@ -824,7 +824,7 @@ def make_settings():
     display = ListMenu('Display', [('Brightness', lambda: (rd(bl_path() or '') or 'n/a'), lambda: bright()), ('Theme', lambda: UI_THEMES[CFG.get('ui_theme', 0) % len(UI_THEMES)][0], theme_t),
                                    ('Accent colour', lambda: ACCENTS[CFG['accent'] % len(ACCENTS)][0], accent), ('Text size', lambda: ['', 'Normal', 'Large', 'Huge'][CFG['fontscale']], fscale),
                                    ('Icon style', lambda: ICON_STYLES[CFG.get('icon_theme', 0) % len(ICON_STYLES)].title(), lambda: (CFG.__setitem__('icon_theme', (CFG.get('icon_theme', 0) + 1) % len(ICON_STYLES)), save_cfg())[1]),
-                                   ('Nightstand when charging', lambda: 'On' if CFG.get('ns_auto') else 'Off', lambda: (CFG.__setitem__('ns_auto', not CFG.get('ns_auto')), save_cfg())[1]),
+                                   ('Nightstand clock', lambda: ['Off', 'Timed', 'On charge'][ns_mode()], lambda: ('open', ns_menu())),
                                    ('Wallpaper', lambda: CFG.get('wall', 'auto').title(), lambda: (CFG.__setitem__('wall', {'auto': 'gradient', 'gradient': 'flat', 'flat': 'auto'}.get(CFG.get('wall', 'auto'), 'auto')), save_cfg())[1]),
                                    ('Corner radius', lambda: ['Square', 'Small', 'Medium', 'Large', 'Round'][CFG.get('radius', 2)], lambda: (CFG.__setitem__('radius', (CFG.get('radius', 2) + 1) % 5), save_cfg())[1]),
                                    ('Clock format', lambda: '24 h' if CFG['clock24'] else '12 h', clk), ('Screen timeout', lambda: ('%ds' % CFG['timeout']) if CFG['timeout'] else 'never', tout)])
@@ -1747,6 +1747,37 @@ def bigfont(size, bold=True):
     k = (size, bold)
     if k not in _bf: _bf[k] = ImageFont.truetype(FDIR + ('DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf'), size)
     return _bf[k]
+NS_DISMISSED = [False]
+def ns_mode(): return CFG.get('ns_mode', 1 if CFG.get('ns_auto') else 0)
+def ns_in_window():
+    now = datetime.datetime.now(); m = now.hour * 60 + now.minute; a, b = CFG.get('ns_start', 21 * 60), CFG.get('ns_end', 7 * 60)
+    return (a <= m < b) if a < b else (m >= a or m < b)
+def ns_wanted():
+    """should the Nightstand clock be shown when the phone would lock / go idle?  mode 1 = in the set time window, mode 2 = whenever locked while charging"""
+    mode = ns_mode(); charging = bool(BATT and BATT.online)
+    if mode == 2: return charging
+    if mode == 1: return ns_in_window() and (charging or not CFG.get('ns_need_charge', True))
+    return False
+def fmt_min(m): return '%02d:%02d' % (m // 60, m % 60)
+def parse_hhmm(t):
+    t = re.sub(r'\D', '', t or '')
+    if not t: return None
+    if len(t) <= 2: h, mi = int(t), 0
+    else: h, mi = int(t[:-2]), int(t[-2:])
+    return h * 60 + mi if 0 <= h < 24 and 0 <= mi < 60 else None
+def ns_menu():
+    def cyc(): CFG['ns_mode'] = (ns_mode() + 1) % 3; NS_DISMISSED[0] = False; save_cfg()
+    def setter(key, title):
+        def done(t):
+            v = parse_hhmm(t)
+            if v is not None: CFG[key] = v; NS_DISMISSED[0] = False; save_cfg()
+        return lambda: ('open', Editor(title + ' (HHMM, 24 h)', fmt_min(CFG.get(key, 0)).replace(':', ''), numeric=True, on_done=done))
+    return ListMenu('Nightstand', [('Turn on', lambda: ['Never (manual)', 'At set times', 'On lock & charging'][ns_mode()], cyc),
+                                   ('From', lambda: fmt_min(CFG.get('ns_start', 21 * 60)), setter('ns_start', 'Start time')), ('Until', lambda: fmt_min(CFG.get('ns_end', 7 * 60)), setter('ns_end', 'End time')),
+                                   ('Only when charging', lambda: 'Yes' if CFG.get('ns_need_charge', True) else 'No', lambda: (CFG.__setitem__('ns_need_charge', not CFG.get('ns_need_charge', True)), save_cfg())[1]),
+                                   ('Open now', None, lambda: ('open', NightClock())),
+                                   ('How it works', None, lambda: ('open', TextBox('Nightstand', 'At set times: the clock appears when the phone would lock or sleep inside the From-Until window (and the screen is off). Only when charging = leave it off the charger and it stays dark.\n\nOn lock & charging: any time the phone locks or sleeps while plugged in, the clock shows instead.\n\nEND exits; UP/DOWN brightness, LEFT/RIGHT style, 1 orientation, * colour.')))])
+
 NS_STYLES = ['Flip', 'Analog', 'Night sky', 'Matrix', 'Breathe', 'LED']
 NS_LEVELS = [3, 8, 18, 40, 90]
 NS_COLORS = ['Accent', 'Red', 'Amber', 'White']
@@ -1871,7 +1902,7 @@ class NightClock(App):
     # ---- keys
     def say(self, m): self.msg = m; self.msg_t = time.time()
     def save(self): CFG.update(ns_style=self.style, ns_orient=self.orient, ns_color=self.color, ns_level=self.level); save_cfg()
-    def exit(self): wr(LCD, CFG['brightness']); wr(KBL, 12); return 'back'
+    def exit(self): wr(LCD, CFG['brightness']); wr(KBL, 12); NS_DISMISSED[0] = True; return 'back'
     def key(self, k):
         if k == 'LEFT': self.style = (self.style - 1) % len(NS_STYLES); self.cols = None; self.say(NS_STYLES[self.style]); self.save()
         elif k == 'RIGHT': self.style = (self.style + 1) % len(NS_STYLES); self.cols = None; self.say(NS_STYLES[self.style]); self.save()
@@ -1982,6 +2013,10 @@ def main():
         S['on'] = on; wr(LCD, CFG['brightness'] if on else 0); wr(KBL, 12 if on else 0)
     def lock():
         if CFG['autolock'] and CFG['setup_done']: S['locked'] = True; S['lock'] = LockScreen()
+    def cur(): return stack[-1] if (not S['locked'] or isinstance(stack[-1], NightClock)) else S['lock']
+    def to_nightstand():
+        lock(); screen(True); stack.append(NightClock()); S['last'] = time.time()       # NightClock sets its own dim backlight, so it must come after screen(True)
+    last_ns = 0
     screen(True)
     if STATE['slider_closed'] and CFG['slider_lock'] and CFG['setup_done']: lock(); screen(False)
     threading.Thread(target=check_updates_bg, daemon=True).start()
@@ -2005,10 +2040,15 @@ def main():
                 notify('Battery ' + ev, msg.replace('\n', ' ')); S['locked'] = False; S['last'] = now; stack.append(TextBox('Battery', msg, 'OK')); dirty = True
             if BATT.shutdown_due(): save_cfg(); BATT.save(now); subprocess.call('sync; poweroff', shell=True)
             if isinstance(stack[-1], (BatteryApp, Monitor, Grid)) or S['locked']: dirty = True
-        app = S['lock'] if S['locked'] else stack[-1]
+        app = cur()
         if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock)):
-            if CFG.get('ns_auto') and BATT and BATT.online and (datetime.datetime.now().hour >= 21 or datetime.datetime.now().hour < 7) and not S['locked']: stack.append(NightClock()); S['last'] = now; dirty = True; continue
+            if ns_wanted() and not (ns_mode() == 1 and NS_DISMISSED[0]): to_nightstand(); dirty = True; continue
             lock(); screen(False)
+        if now - last_ns > 5:                                   # timed mode: show the clock when the window opens, even if the screen is already off
+            last_ns = now
+            if ns_mode() == 1:
+                if not ns_in_window(): NS_DISMISSED[0] = False
+                elif ns_wanted() and not NS_DISMISSED[0] and not isinstance(stack[-1], (NightClock, Calling, IncomingCall, Ringing)) and (not S['on'] or now - S['last'] > (CFG['timeout'] or 30)): to_nightstand(); dirty = True
         if CFG['alarm']['on'] and now - last_alarm > 5:
             last_alarm = now; n = datetime.datetime.now(); a = CFG['alarm']; day = n.strftime('%Y-%m-%d')
             if n.hour == a['h'] and n.minute == a['m'] and a.get('fired') != day:
@@ -2033,9 +2073,9 @@ def main():
                 if not isinstance(stack[-1], Popup) or stack[-1].title != 'Power': stack.append(power_menu())
                 dirty = True; continue
             if not S['on']: screen(True); S['last'] = time.time(); dirty = True; continue          # first key only wakes the screen
-            S['last'] = time.time(); app = S['lock'] if S['locked'] else stack[-1]
-            if S['locked'] and k == 'END': screen(False); continue
-            if S['locked']:
+            S['last'] = time.time(); app = cur()
+            if S['locked'] and k == 'END' and not isinstance(app, NightClock): screen(False); continue
+            if S['locked'] and not isinstance(app, NightClock):
                 r = app.key(k)
                 if r == 'unlock':
                     if CFG['pin'] and not isinstance(app, PinEntry): S['lock'] = PinEntry()
@@ -2043,6 +2083,7 @@ def main():
                 elif r == 'cancel': S['lock'] = LockScreen()
                 dirty = True; continue
             if k == 'END' and len(stack) == 1 and isinstance(app, Grid):                            # red key on the home screen: sleep
+                if ns_wanted(): NS_DISMISSED[0] = False; to_nightstand(); dirty = True; continue
                 lock(); screen(False); continue
             try:
                 if k == 'LSK' and not isinstance(app, (Popup, Grid, Editor)) and app.options(): res = ('open', Popup('Options', app.options()))
@@ -2050,7 +2091,7 @@ def main():
                 else: res = app.key(k)
             except Exception: res = None; traceback.print_exc()
             handle(stack, res); dirty = True
-        if not dirty and not (S['lock'] or stack[-1]).tick: time.sleep(0.02)
+        if not dirty and not cur().tick: time.sleep(0.02)
 
 if __name__ == '__main__':
     while True:

@@ -1,1 +1,1 @@
-Nightstand clock (6 animated styles, portrait + both landscape directions, dimmed backlight, auto mode while charging at night).
+Nightstand: choose when it turns on (set times, or whenever locked while charging) - Settings > Display > Nightstand clock.
