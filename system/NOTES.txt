@@ -1,1 +1,1 @@
-Calls: fixed keypad-tone command, call audio starts at dialling, call-audio control names.
+Calls: local ringback tone while the far end rings; call state logging.

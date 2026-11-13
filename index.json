@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.3",
-  "file": "packages/jgmdeb-system-1.3.3.tar.gz",
-  "sha256": "7268380b6dc534983e3227d74abe8488d966d2fcd440b673818127209219c37d",
-  "size": 70230,
-  "notes": "Calls: fixed keypad-tone command, call audio starts at dialling, call-audio control names."
+  "version": "1.3.4",
+  "file": "packages/jgmdeb-system-1.3.4.tar.gz",
+  "sha256": "a532b212ad8f9a137ffa7ec9adf6045d8a98647935ec980e93e348f8e5a063e7",
+  "size": 70901,
+  "notes": "Calls: local ringback tone while the far end rings; call state logging."
  }
 }

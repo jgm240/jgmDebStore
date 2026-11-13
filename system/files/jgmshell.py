@@ -354,11 +354,12 @@ class Calling(App):
     """A voice call: outgoing (dials through the modem) or an answered incoming call (cid given). END hangs up, OK toggles speaker, digits send DTMF."""
     title = 'Call'; right = 'End'; tick = 1
     def __init__(self, num, cid=None):
-        self.num = num; self.cid = cid; self.t0 = None; self.state = 'Dialing...' if cid is None else 'Connecting...'; self.err = ''; self.speaker = False; self.finished = False; self.finished_at = 0; self.audio = False
+        self.num = num; self.cid = cid; self.t0 = None; self.state = 'Dialing...' if cid is None else 'Connecting...'; self.err = ''; self.speaker = False; self.finished = False; self.finished_at = 0; self.audio = False; self.rb = False
         if cid is None: jsave('calls.json', (jload('calls.json', []) + [{'n': num, 't': time.time(), 'dir': 'out'}])[-50:])
         threading.Thread(target=self.run, daemon=True).start()
     def finish(self, text):
         self.state = text; self.finished = True; self.finished_at = time.time() + 2
+        if self.rb: jgmvoice.ringback(False); self.rb = False
         if self.audio: jgmvoice.audio('off'); self.audio = False
     def run(self):
         try:
@@ -376,6 +377,9 @@ class Calling(App):
                     if seen or time.time() - started > 8: return self.finish('Call ended')
                     continue
                 seen = True; name = c['state_name']
+                if c['state'] != getattr(self, 'last_state', None): jgmvoice.debug('call %d state %d (%s) dir %s' % (self.cid, c['state'], name, c['dir'])); self.last_state = c['state']
+                if c['state'] == 5 and not self.rb: jgmvoice.ringback(True); self.rb = True           # far end is ringing: play the local ringback tone
+                if c['state'] != 5 and self.rb: jgmvoice.ringback(False); self.rb = False
                 if c['state'] == 3 and self.t0 is None:
                     self.t0 = time.time(); self.state = 'Connected'
                     if not self.audio: jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
@@ -391,6 +395,7 @@ class Calling(App):
     def key(self, k):
         if k in ('RSK', 'END'):
             if self.cid is not None and jgmvoice: threading.Thread(target=lambda: jgmvoice.hangup(self.cid), daemon=True).start()
+            if self.rb: jgmvoice.ringback(False); self.rb = False
             if self.audio: jgmvoice.audio('off')
             return 'back'
         if k == 'OK' and self.t0: self.speaker = not self.speaker; jgmvoice.audio('speaker' if self.speaker else 'handset')

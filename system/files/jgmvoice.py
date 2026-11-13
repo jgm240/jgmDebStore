@@ -73,3 +73,10 @@ class Watcher(threading.Thread):
                     c = self.seen.pop(cid)
                     if self.on_end: self.on_end(c)
             except Exception: ready = False; time.sleep(5)
+
+def ringback(on):
+    """local ringback tone while the far end rings"""
+    subprocess.Popen(['sh', '/opt/jgm/ringback.sh', 'start' if on else 'stop'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def debug(msg):
+    try: open('/data/jgm/call-debug.log', 'a').write(time.strftime('%H:%M:%S ') + msg + '\n')
+    except Exception: pass
