@@ -5,7 +5,7 @@ stop() { pkill -f "aplay -D hw:0,2" 2>/dev/null; pkill -f "arecord -D hw:0,2" 2>
 off() {
   stop
   c "PRI_MI2S_RX_Voice Mixer CSVoice" 0; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 0
-  c "RX1 MIX1 INP1" ZERO; c "RX3 MIX1 INP1" ZERO; c "RDAC2 MUX" ZERO; c "EAR_S Switch" 0; c "SPK DAC Switch" 0; c "Speaker Boost" DISABLE
+  c "RX1 MIX1 INP1" ZERO; c "RX3 MIX1 INP1" ZERO; c "RDAC2 MUX" ZERO; c "EAR_S" ZERO; c "SPK DAC Switch" 0; c "Speaker Boost" DISABLE
   c "DEC1 MUX" ZERO; c "IIR1 INP1 MUX" ZERO
 }
 case "$1" in

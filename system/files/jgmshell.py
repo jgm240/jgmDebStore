@@ -368,7 +368,7 @@ class Calling(App):
                 st = jgmsim.setup(25)
                 if not st['ok']: self.err = st['why']; return self.finish('No SIM')
                 if not st.get('registered'): self.err = 'No network yet'; return self.finish('No network')
-                jgmvoice.register(); self.cid = jgmvoice.dial(self.num)
+                jgmvoice.register(); self.cid = jgmvoice.dial(self.num); jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True       # voice path up from the start, so ringback is heard
             seen = False; started = time.time()
             while not self.finished:
                 time.sleep(1); cs = {c['id']: c for c in jgmvoice.calls()}; c = cs.get(self.cid)
@@ -376,7 +376,9 @@ class Calling(App):
                     if seen or time.time() - started > 8: return self.finish('Call ended')
                     continue
                 seen = True; name = c['state_name']
-                if c['state'] == 3 and self.t0 is None: self.t0 = time.time(); self.state = 'Connected'; jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
+                if c['state'] == 3 and self.t0 is None:
+                    self.t0 = time.time(); self.state = 'Connected'
+                    if not self.audio: jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
                 elif c['state'] != 3: self.state = {1: 'Dialing...', 5: 'Ringing...', 10: 'Dialing...', 8: 'Ending...'}.get(c['state'], name)
         except Exception as e: self.err = str(e)[:60]; self.finish('Call failed')
     def draw(self, d, img):

@@ -44,7 +44,7 @@ def answer(cid):
     r = svc().call(0x22, {0x01: bytes([cid])}, timeout=10)
     if r['result'][0] != 0: raise RuntimeError('answer failed (error %d)' % r['result'][1])
 def send_dtmf(cid, digits):
-    svc().call(0x24, {0x01: bytes([cid, len(digits)]) + digits.encode()}, timeout=5)
+    svc().call(0x25, {0x01: bytes([cid, len(digits)]) + digits.encode()}, timeout=5)        # QMI VOICE burst DTMF (0x24 is 'send flash')
 
 # ---- in-call audio
 def audio(mode):
