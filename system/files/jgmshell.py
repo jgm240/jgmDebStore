@@ -907,12 +907,42 @@ def adb_menu():
                             ('IP address', lambda: wlan_ip() or 'no WiFi', lambda: None),
                             ('How to use', None, lambda: ('open', TextBox('ADB', 'USB: plug the phone in and run\n  adb devices\n  adb shell\n  adb push FILE /path\n  adb pull /path FILE\n  adb reboot [recovery|bootloader|edl]\n\nWiFi: turn on "adb over WiFi", then\n  adb connect %s:5555\nThere is NO authentication: anyone on the same network gets a root shell. Use it only on networks you trust and turn it off afterwards.' % (wlan_ip() or '<phone IP>'))))])
 
+def mobile_menu():
+    cache = {'t': 0, 'st': None}
+    def st():
+        if time.time() - cache['t'] > 4 and jgmsim:
+            cache['t'] = time.time()
+            def work():
+                try: cache['st'] = jgmsim.status() if jgmsim.modem_up() else None
+                except Exception: cache['st'] = None
+            threading.Thread(target=work, daemon=True).start()
+        return cache['st']
+    def mode_name(): return jgmsim.NET_MODES[jgmsim.get_mode()][0] if jgmsim else 'n/a'
+    def choose():
+        def pick(i):
+            def f():
+                def work():
+                    try: jgmsim.apply_mode(i)
+                    except Exception: pass
+                threading.Thread(target=work, daemon=True).start(); cache['t'] = 0; return 'popback'
+            return f
+        items = [(n, pick(i)) for i, (n, _) in enumerate(jgmsim.NET_MODES)]
+        return ('open', Popup('Network mode', items))
+    def stat_text():
+        v = st()
+        if not jgmsim or not jgmsim.modem_up(): return 'modem off'
+        if not v: return '...'
+        return ('%s %s' % (v['rat'], ('%d dBm' % v['dbm']) if v['dbm'] is not None else '')) if v['registered'] else 'searching'
+    return ListMenu('Mobile network', [('Network mode', mode_name, choose), ('Connection', stat_text, lambda: None),
+                                       ('About modes', None, lambda: ('open', TextBox('Network modes', '2G only / 3G only / 2G + 3G: plain circuit-switched voice. Calls work like on an old phone. 2G + 3G is the default. Many operators have switched 3G off, so 3G only may show no service.\n\n4G / VoLTE: allows LTE. Voice on LTE needs an IMS data connection that this phone does not set up yet, so calls made there fail with "busy". Use it only if 2G/3G is gone in your area (and expect no calls).\n\nThe modem must be running (Settings > Modem / audio).')))])
+
 class Settings(ListMenu):
     def __init__(self):
         items = [('Display & theme', None, lambda: ('open', make_settings())), ('Home screen keys', None, lambda: ('open', home_layout())),
                  ('Date & time', None, lambda: ('open', DateTimeSet())), ('Lock & security', None, lambda: ('open', lock_menu())),
                  ('Slider', lambda: ('' if not CFG['slider_enabled'] else ('Closed' if STATE['slider_closed'] else 'Open')), lambda: ('open', slider_menu())),
                  ('WiFi', None, lambda: ('open', WifiApp())),
+                 ('Mobile network', lambda: jgmsim.NET_MODES[jgmsim.get_mode()][0] if jgmsim else 'n/a', lambda: ('open', mobile_menu())),
                  ('Modem / audio', lambda: 'Running' if audio_ok() else 'Off', lambda: ('open', modem_menu())),
                  ('Bluetooth', lambda: 'BLE' if bt_available() else 'n/a', lambda: ('open', BluetoothApp())),
                  ('ADB', lambda: ('USB' if os.path.exists(DATA + '/adb-usb') else 'Off') + (' + WiFi' if os.path.exists(DATA + '/adb-tcp') else ''), lambda: ('open', adb_menu())),

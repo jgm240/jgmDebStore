@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.7",
-  "file": "packages/jgmdeb-system-1.3.7.tar.gz",
-  "sha256": "72337a1aad45bcf8be3df7debff3b090f469f29b85f088653d1ae9f75b5c58b2",
-  "size": 73117,
-  "notes": "Carrier config check (PDC): modem already has AT/DTAG active; voice kept on 2G/3G until IMS data is up."
+  "version": "1.3.8",
+  "file": "packages/jgmdeb-system-1.3.8.tar.gz",
+  "sha256": "d0fb94add3127c7bf4359394f4ea1abca19264795d079272a049d468edc4dbd6",
+  "size": 74072,
+  "notes": "Settings > Mobile network: switch between 2G only / 3G only / 2G+3G / 4G-VoLTE, live connection status."
  }
 }

@@ -50,12 +50,8 @@ def setup(wait=40):
     end = time.time() + wait; reg = False
     try: svc(DMS).call(0x2e, {0x01: bytes([0])})                       # online
     except Exception: pass
-    if not os.path.exists('/data/jgm/volte'):
-        # The right carrier profile (AT/DTAG) IS active in the modem, but VoLTE needs an IMS data bearer (an 'ims' APN) that nothing on this phone sets up yet,
-        # so calls started on LTE come back as a bogus 'busy' (SIP 486). Keep to 2G/3G, where voice is plain circuit-switched, until mobile data / IMS is brought up.
-        # create /data/jgm/volte to allow LTE again. 0x17 = 1: only until the next power cycle; this runs on every start.
-        try: svc(NAS).call(0x33, {0x11: struct.pack('<H', 0x0C), 0x17: bytes([1])})
-        except Exception: pass
+    try: apply_mode()
+    except Exception: pass
     while time.time() < end:
         try: reg = svc(NAS).call(0x24).get(1, b'')[:1] == b'\x01'
         except Exception: reg = False
@@ -131,3 +127,27 @@ def operator():
 def signal():
     r = svc(NAS).call(0x20); b = r.get(0x01, b'')
     return (b[0], b[1] - 256 if b[1] > 127 else b[1]) if len(b) >= 2 else None       # (dBm-ish strength, radio interface)
+
+
+# ---- network mode: which radio technologies the modem may use (NAS system selection, mode preference bits: GSM 0x04, WCDMA 0x08, LTE 0x10)
+NET_MODES = [('2G only', 0x04), ('3G only', 0x08), ('2G + 3G', 0x0C), ('4G / VoLTE (auto)', 0x1C)]
+MODE_FILE = '/data/jgm/netmode'
+RAT_NAMES = {1: 'CDMA', 2: 'EVDO', 4: '2G (GSM)', 5: '3G (UMTS)', 8: '4G (LTE)', 9: 'TD-SCDMA'}
+def get_mode():
+    try: return max(0, min(len(NET_MODES) - 1, int(open(MODE_FILE).read().strip())))
+    except Exception: return 2                       # default: 2G + 3G (plain circuit-switched voice; VoLTE needs an IMS data bearer that is not set up yet)
+def apply_mode(idx=None):
+    """tell the modem which technologies it may use (until the next power cycle; setup() re-applies the saved choice on every start)"""
+    if idx is not None: open(MODE_FILE, 'w').write(str(idx))
+    bits = NET_MODES[get_mode()][1]
+    return svc(NAS).call(0x33, {0x11: struct.pack('<H', bits), 0x17: bytes([1])})['result']
+def status():
+    """{'registered': bool, 'rat': 'name', 'dbm': int or None}"""
+    b = svc(NAS).call(0x24).get(1, b''); out = {'registered': bool(b) and b[0] == 1, 'rat': RAT_NAMES.get(b[-1], '?') if len(b) >= 6 else '?', 'dbm': None}
+    try:
+        r = svc(NAS).call(0x4f)
+        for k, fmt, idx in ((0x14, '<bbhh', 2), (0x13, 'bb', 0), (0x12, 'b', 0)):
+            if k in r:
+                v = struct.unpack(fmt, r[k][:struct.calcsize(fmt)]); out['dbm'] = v[idx] if k != 0x14 else v[2]; break
+    except Exception: pass
+    return out

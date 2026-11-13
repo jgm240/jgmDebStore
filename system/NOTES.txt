@@ -1,1 +1,1 @@
-Carrier config check (PDC): modem already has AT/DTAG active; voice kept on 2G/3G until IMS data is up.
+Settings > Mobile network: switch between 2G only / 3G only / 2G+3G / 4G-VoLTE, live connection status.
