@@ -13,6 +13,8 @@ case "$1" in
   handset|speaker)
     off
     c "MI2S_RX Channels" One; c "MI2S_TX Channels" One
+    # load the stock voice calibration for this device pair (service keeps it alive; handset = ACDB ids 7/4, speaker phone = 14/11)
+    if [ "$1" = handset ]; then sh /opt/jgm/jgmcal-daemon.sh send 7 4; else sh /opt/jgm/jgmcal-daemon.sh send 14 11; fi
     c "PRI_MI2S_RX_Voice Mixer CSVoice" 1; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 1
     # the DSP voice paths start muted / at the lowest volume: unmute and set levels like the stock config does (mute flag, session -1 = all, ramp ms)
     amixer -q -c 0 cset name="Voice Rx Device Mute" 0,-1,20 2>/dev/null; amixer -q -c 0 cset name="Voice Tx Mute" 0,-1,20 2>/dev/null

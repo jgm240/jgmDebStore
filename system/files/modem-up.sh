@@ -13,5 +13,6 @@ pgrep -f jgmrmtfs >/dev/null || (nohup python3 /opt/jgm/jgmrmtfs.py > $M/rmtfs.e
 sleep 2
 (sleep 99999998 < /dev/subsys_modem &)               # opening the node boots the modem; keep it open
 for i in $(seq 1 30); do grep -q msm8909 /proc/asound/cards 2>/dev/null && break; sleep 2; done
+sh /opt/jgm/jgmcal-daemon.sh start      # voice calibration service
 sh /opt/jgm/audio-speaker.sh
 sleep 90; rm -f $M/modem-starting

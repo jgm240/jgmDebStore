@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.9",
-  "file": "packages/jgmdeb-system-1.3.9.tar.gz",
-  "sha256": "65bda53a00c6fb94a8b6d18953823e5f543bc0cf7adc2fd8808cfd2f7c4c9ea6",
-  "size": 74179,
-  "notes": "Calls: unmute voice paths and set voice volume like the stock config."
+  "version": "1.4.0",
+  "file": "packages/jgmdeb-system-1.4.0.tar.gz",
+  "sha256": "cfc7531951ad761189fdb39d9dcd736fe899133da2c16c250579fe9850c8ac97",
+  "size": 76439,
+  "notes": "Call audio: runs the stock voice calibration loader (needs the local Android runtime in /system) so the voice DSP gets its calibration."
  }
 }

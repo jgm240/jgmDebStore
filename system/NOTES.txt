@@ -1,1 +1,1 @@
-Calls: unmute voice paths and set voice volume like the stock config.
+Call audio: runs the stock voice calibration loader (needs the local Android runtime in /system) so the voice DSP gets its calibration.
