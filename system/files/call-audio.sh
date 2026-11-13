@@ -14,6 +14,9 @@ case "$1" in
     off
     c "MI2S_RX Channels" One; c "MI2S_TX Channels" One
     c "PRI_MI2S_RX_Voice Mixer CSVoice" 1; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 1
+    # the DSP voice paths start muted / at the lowest volume: unmute and set levels like the stock config does (mute flag, session -1 = all, ramp ms)
+    amixer -q -c 0 cset name="Voice Rx Device Mute" 0,-1,20 2>/dev/null; amixer -q -c 0 cset name="Voice Tx Mute" 0,-1,20 2>/dev/null
+    amixer -q -c 0 cset name="Voice Rx Gain" 3,-1,20 2>/dev/null
     c "ADC1 Volume" 6; c "DEC1 MUX" ADC1; c "IIR1 INP1 MUX" DEC1                     # microphone
     if [ "$1" = handset ]; then c "RX1 MIX1 INP1" RX1; c "RDAC2 MUX" RX1; c "RX1 Digital Volume" 84; c "EAR PA Gain" POS_6_DB; c "EAR_S" Switch
     else c "RX3 Digital Volume" 60; c "RX3 MIX1 INP1" RX1; c "SPK DAC Switch" 1; c "Speaker Boost" ENABLE; fi

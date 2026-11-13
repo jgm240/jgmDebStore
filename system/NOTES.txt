@@ -1,1 +1,1 @@
-Settings > Mobile network: switch between 2G only / 3G only / 2G+3G / 4G-VoLTE, live connection status.
+Calls: unmute voice paths and set voice volume like the stock config.
