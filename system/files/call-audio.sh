@@ -5,7 +5,7 @@ stop() { pkill -f "aplay -D hw:0,2" 2>/dev/null; pkill -f "arecord -D hw:0,2" 2>
 off() {
   stop
   c "PRI_MI2S_RX_Voice Mixer CSVoice" 0; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 0
-  c "RX1 MIX1 INP1" ZERO; c "RX3 MIX1 INP1" ZERO; c "RDAC2 MUX" ZERO; c "EAR_S" ZERO; c "SPK DAC Switch" 0; c "Speaker Boost" DISABLE
+  c "RX1 MIX1 INP1" ZERO; c "RX3 MIX1 INP1" ZERO; c "RDAC2 MUX" ZERO; c "EAR_S" ZERO; c "EAR PA Gain" POS_1P5_DB; c "SPK DAC Switch" 0; c "Speaker Boost" DISABLE
   c "DEC1 MUX" ZERO; c "IIR1 INP1 MUX" ZERO
 }
 case "$1" in
@@ -15,7 +15,7 @@ case "$1" in
     c "MI2S_RX Channels" One; c "MI2S_TX Channels" One
     c "PRI_MI2S_RX_Voice Mixer CSVoice" 1; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 1
     c "ADC1 Volume" 6; c "DEC1 MUX" ADC1; c "IIR1 INP1 MUX" DEC1                     # microphone
-    if [ "$1" = handset ]; then c "RX1 MIX1 INP1" RX1; c "RDAC2 MUX" RX1; c "EAR_S" Switch
+    if [ "$1" = handset ]; then c "RX1 MIX1 INP1" RX1; c "RDAC2 MUX" RX1; c "RX1 Digital Volume" 84; c "EAR PA Gain" POS_6_DB; c "EAR_S" Switch
     else c "RX3 Digital Volume" 60; c "RX3 MIX1 INP1" RX1; c "SPK DAC Switch" 1; c "Speaker Boost" ENABLE; fi
     # the voice session on the DSP starts when the CS-Voice PCM device (hw:0,2) is opened for playback and capture
     (nohup aplay -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/zero >/dev/null 2>&1 &)

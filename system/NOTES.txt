@@ -1,1 +1,1 @@
-Calls: local ringback tone while the far end rings; call state logging.
+Calls: louder earpiece route and ringback.

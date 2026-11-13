@@ -7,7 +7,7 @@ case "$1" in
     [ -f $W ] || python3 - <<PY
 import wave, struct, math
 w = wave.open("$W", "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
-on = b"".join(struct.pack("<h", int(4000 * math.sin(2 * math.pi * 425 * i / 48000) * min(1, i / 2400, (48000 - i) / 2400))) for i in range(48000))
+on = b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * 425 * i / 48000) * min(1, i / 2400, (48000 - i) / 2400))) for i in range(48000))
 w.writeframes(on + b"\0\0" * 48000 * 5); w.close()
 PY
     sh $0 stop

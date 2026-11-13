@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.4",
-  "file": "packages/jgmdeb-system-1.3.4.tar.gz",
-  "sha256": "a532b212ad8f9a137ffa7ec9adf6045d8a98647935ec980e93e348f8e5a063e7",
-  "size": 70901,
-  "notes": "Calls: local ringback tone while the far end rings; call state logging."
+  "version": "1.3.5",
+  "file": "packages/jgmdeb-system-1.3.5.tar.gz",
+  "sha256": "0e835db654823f05ec41cd6eb285322727092e5bacdf1ac064c692470686c96d",
+  "size": 70931,
+  "notes": "Calls: louder earpiece route and ringback."
  }
 }
