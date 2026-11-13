@@ -51,7 +51,8 @@ def setup(wait=40):
     try: svc(DMS).call(0x2e, {0x01: bytes([0])})                       # online
     except Exception: pass
     if not os.path.exists('/data/jgm/volte'):
-        # no carrier (MCFG/IMS) profile is active, so VoLTE calls come back as a bogus 'busy': keep to 2G/3G, where voice is plain circuit-switched.
+        # The right carrier profile (AT/DTAG) IS active in the modem, but VoLTE needs an IMS data bearer (an 'ims' APN) that nothing on this phone sets up yet,
+        # so calls started on LTE come back as a bogus 'busy' (SIP 486). Keep to 2G/3G, where voice is plain circuit-switched, until mobile data / IMS is brought up.
         # create /data/jgm/volte to allow LTE again. 0x17 = 1: only until the next power cycle; this runs on every start.
         try: svc(NAS).call(0x33, {0x11: struct.pack('<H', 0x0C), 0x17: bytes([1])})
         except Exception: pass
