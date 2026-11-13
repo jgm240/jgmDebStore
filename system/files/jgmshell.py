@@ -374,7 +374,8 @@ class Calling(App):
             while not self.finished:
                 time.sleep(1); cs = {c['id']: c for c in jgmvoice.calls()}; c = cs.get(self.cid)
                 if not c:
-                    if seen or time.time() - started > 8: return self.finish('Call ended')
+                    if seen or time.time() - started > 8:
+                        why = jgmvoice.end_reason_text(self.cid); jgmvoice.debug('call %s ended: %s (seen=%s)' % (self.cid, why or 'no reason', seen)); self.err = ('Reason: ' + why) if why else ''; return self.finish(why or 'Call ended')
                     continue
                 seen = True; name = c['state_name']
                 if c['state'] != getattr(self, 'last_state', None): jgmvoice.debug('call %d state %d (%s) dir %s' % (self.cid, c['state'], name, c['dir'])); self.last_state = c['state']
@@ -384,7 +385,7 @@ class Calling(App):
                     self.t0 = time.time(); self.state = 'Connected'
                     if not self.audio: jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
                 elif c['state'] != 3: self.state = {1: 'Dialing...', 5: 'Ringing...', 10: 'Dialing...', 8: 'Ending...'}.get(c['state'], name)
-        except Exception as e: self.err = str(e)[:60]; self.finish('Call failed')
+        except Exception as e: self.err = str(e)[:60]; jgmvoice.debug('call exception: ' + repr(e)); self.finish('Call failed')
     def draw(self, d, img):
         nm = contact_name(self.num); ctext(d, W / 2, 56, nm or self.num, font(22, True), FG)
         if nm: ctext(d, W / 2, 86, self.num, font(13), DIM)

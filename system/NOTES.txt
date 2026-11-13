@@ -1,1 +1,1 @@
-Calls: louder earpiece route and ringback.
+Calls: voice over 2G/3G (circuit-switched) by default because no carrier IMS profile is active; call end reason shown.

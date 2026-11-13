@@ -1,6 +1,6 @@
 """jgmDeb: SIM card access through the modem's QMI UIM service (own work). Needs the modem running (Settings > Modem / audio).
 card_status(), iccid(), imsi(), read_adn() (contacts stored on the SIM), verify_pin(). Also operator and signal via NAS."""
-import struct, time
+import struct, time, os
 import jgmqmi as Q
 
 UIM, NAS, DMS = 0x0B, 0x03, 0x02
@@ -50,6 +50,11 @@ def setup(wait=40):
     end = time.time() + wait; reg = False
     try: svc(DMS).call(0x2e, {0x01: bytes([0])})                       # online
     except Exception: pass
+    if not os.path.exists('/data/jgm/volte'):
+        # no carrier (MCFG/IMS) profile is active, so VoLTE calls come back as a bogus 'busy': keep to 2G/3G, where voice is plain circuit-switched.
+        # create /data/jgm/volte to allow LTE again. 0x17 = 1: only until the next power cycle; this runs on every start.
+        try: svc(NAS).call(0x33, {0x11: struct.pack('<H', 0x0C), 0x17: bytes([1])})
+        except Exception: pass
     while time.time() < end:
         try: reg = svc(NAS).call(0x24).get(1, b'')[:1] == b'\x01'
         except Exception: reg = False

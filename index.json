@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.3.5",
-  "file": "packages/jgmdeb-system-1.3.5.tar.gz",
-  "sha256": "0e835db654823f05ec41cd6eb285322727092e5bacdf1ac064c692470686c96d",
-  "size": 70931,
-  "notes": "Calls: louder earpiece route and ringback."
+  "version": "1.3.6",
+  "file": "packages/jgmdeb-system-1.3.6.tar.gz",
+  "sha256": "f107e9cab632ee1370a2ec3f2e40d7fddbe2077244b536debee7d77f4a42835d",
+  "size": 71647,
+  "notes": "Calls: voice over 2G/3G (circuit-switched) by default because no carrier IMS profile is active; call end reason shown."
  }
 }

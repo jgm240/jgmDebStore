@@ -5,7 +5,8 @@ import jgmsim as S
 
 VOICE = 0x09
 STATES = {1: 'Dialing', 2: 'Incoming', 3: 'Connected', 4: 'Connecting', 5: 'Ringing', 6: 'On hold', 7: 'Waiting', 8: 'Ending', 9: 'Ended', 10: 'Setup'}
-_registered = False
+_registered = False; _last_sig = None
+END_REASONS = {}                       # call id -> text the modem gave when the call ended (e.g. 'cc_sip_486_busy')
 
 def svc(): return S.svc(VOICE)
 def register():
@@ -31,9 +32,14 @@ def _parse_calls(info, nums):
 def calls():
     """[{'id','state','state_name','dir','number'}] of the calls the modem knows about"""
     r = svc().call(0x2f)
-    return _parse_calls(r.get(0x10, b''), r.get(0x11, b'')) if r['result'][0] == 0 else []
+    out = _parse_calls(r.get(0x10, b''), r.get(0x11, b'')) if r['result'][0] == 0 else []
+    sig = repr(sorted((k, v.hex()) for k, v in r.items() if k != 'result'))
+    global _last_sig
+    if sig != _last_sig: _last_sig = sig; debug('calls() result %s tlvs %s' % (r['result'], sig[:200]))
+    return out
 def dial(number):
     r = svc().call(0x20, {0x01: number.encode('ascii'), 0x10: bytes([0])}, timeout=15)
+    debug('dial %s*** -> result %s tlvs %s' % (number[:4], r['result'], {hex(k): v.hex() for k, v in r.items() if k != 'result'}))
     if r['result'][0] != 0: raise RuntimeError('dial failed (error %d)' % r['result'][1])
     return r.get(0x10, b'\x01')[0]
 def hangup(cid=None):
@@ -64,7 +70,10 @@ class Watcher(threading.Thread):
                     st = S.setup(20)
                     if not st['ok']: time.sleep(15); continue
                     register(); ready = True
-                svc().poll_ind(1.0)                                     # indications arrive here; also poll state so nothing is missed
+                for mid, tl in svc().poll_ind(1.0):                     # indications arrive here; also poll state so nothing is missed
+                    debug('indication 0x%x %s' % (mid, {hex(k): v.hex() for k, v in tl.items()}))
+                    if mid == 0x2e and 0x2e in tl and len(tl[0x2e]) >= 3:
+                        b = tl[0x2e]; END_REASONS[b[1]] = b[3:3 + b[2] * 2].decode('utf-16-le', 'ignore')
                 cs = {c['id']: c for c in calls()}
                 for cid, c in cs.items():
                     if cid not in self.seen and c['dir'] == 'in' and c['state'] in (2, 7, 10): self.on_incoming(c)
@@ -80,3 +89,10 @@ def ringback(on):
 def debug(msg):
     try: open('/data/jgm/call-debug.log', 'a').write(time.strftime('%H:%M:%S ') + msg + '\n')
     except Exception: pass
+
+def end_reason_text(cid):
+    """friendly text for how a call ended, or ''"""
+    r = (END_REASONS.get(cid) or '').lower()
+    for key, text in (('busy', 'Busy'), ('noanswer', 'No answer'), ('no_answer', 'No answer'), ('reject', 'Rejected'), ('decline', 'Declined'), ('unreach', 'Not reachable'), ('barr', 'Call barred'), ('not_found', 'Number not found'), ('forbid', 'Not allowed')):
+        if key in r: return text
+    return r.replace('cc_', '').replace('_', ' ') if r else ''
