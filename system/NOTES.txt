@@ -1,1 +1,1 @@
-Call audio: runs the stock voice calibration loader (needs the local Android runtime in /system) so the voice DSP gets its calibration.
+X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data.

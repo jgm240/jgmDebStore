@@ -1951,6 +1951,339 @@ class NightClock(App):
         elif k == 'OK': self.info = not self.info
         elif k in ('RSK', 'END', 'LSK'): return self.exit()
 
+# --------------------------------------------------------------------------------------------- X11 apps, Applications launcher, Software center
+try: import jgmx
+except Exception: jgmx = None
+_X = {'srv': None, 'inp': None}
+X_PACKAGES = ['xvfb', 'matchbox-window-manager', 'x11-xserver-utils', 'python3-xlib', 'wmctrl', 'xterm', 'x11-apps', 'dbus-x11']
+def x_ready(): return bool(jgmx) and bool(shutil.which('Xvfb')) and bool(shutil.which('matchbox-window-manager'))
+def xsrv():
+    if _X['srv'] is None: _X['srv'] = jgmx.XServer()
+    return _X['srv']
+def xinp():
+    if _X['inp'] is None: _X['inp'] = jgmx.XInput()
+    return _X['inp']
+def mem_available_mb():
+    for l in rd('/proc/meminfo').splitlines():
+        if l.startswith('MemAvailable'): return int(l.split()[1]) // 1024
+    return 0
+def x_launch(app):
+    """make sure the X screen is up, start the app on it, return the viewer"""
+    v = XView(); v.starting = True
+    def work():
+        try:
+            if not x_ready(): v.msg = 'X server not installed (Software > Install X)'; v.starting = False; return
+            if mem_available_mb() < 60: v.msg = 'Low memory (%d MB free)' % mem_available_mb()
+            xsrv().start()
+            if app: jgmx.launch(app)
+        except Exception as e: v.msg = str(e)[:40]
+        v.starting = False
+    threading.Thread(target=work, daemon=True).start(); return v
+
+class XView(App):
+    """The panel as a window onto the X screen. Pointer mode: arrows move, OK click, CALL double-click, 5 click, 0 right-click, 2/8 scroll, 1 zoom, # keyboard mode, * Escape.
+    Keyboard mode: digits type letters (multitap), OK Enter, RSK Backspace, arrows = arrow keys, END back to pointer mode. LSK = menu. END (pointer mode) = back to the launcher."""
+    title = ''; left = ''; right = ''
+    def __init__(self):
+        self.zoom = CFG.get('x_zoom', 'fit'); self.px, self.py = 240, 320; self.kb = False; self.mt = MultiTap(); self.last_move = 0.0; self.step = 8; self.msg = ''; self.msg_t = 0.0; self.starting = False; self.err = ''
+    @property
+    def tick(self): return 0.2
+    def say(self, m): self.msg = m; self.msg_t = time.time()
+    def render_full(self):
+        img = Image.new('RGB', (W, H), (16, 22, 28)); d = ImageDraw.Draw(img)
+        fr = xsrv().grab() if jgmx and _X['srv'] and xsrv().running() else None
+        if fr is None:
+            ctext(d, W / 2, 130, 'Starting X...' if self.starting else (self.msg or 'X is not running'), font(14, True), (200, 210, 215)); ctext(d, W / 2, 170, 'END = back', font(11), (120, 135, 140)); return img
+        sw, sh_ = fr.size
+        if self.zoom == 'fit': img.paste(fr.resize((W, H), Image.BILINEAR), (0, 0)); ox = oy = 0; sx = W / sw; sy = H / sh_
+        else:
+            ox = max(0, min(sw - W, self.px - W // 2)); oy = max(0, min(sh_ - H, self.py - H // 2)); img.paste(fr.crop((ox, oy, ox + W, oy + H)), (0, 0)); sx = sy = 1.0
+        cx, cy = (self.px - ox) * sx, (self.py - oy) * sy
+        d.line((cx - 7, cy, cx + 7, cy), fill=(255, 255, 255), width=1); d.line((cx, cy - 7, cx, cy + 7), fill=(255, 255, 255), width=1); d.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), outline=(255, 60, 60))
+        tag = ('KB ' if self.kb else '') + ('1:1' if self.zoom != 'fit' else '')
+        if tag: d.rectangle((0, 0, 8 + 7 * len(tag), 13), fill=(0, 0, 0)); d.text((3, 1), tag, font=font(10, True), fill=(120, 255, 160))
+        if self.msg and time.time() - self.msg_t < 2: ctext(d, W / 2, H - 20, self.msg, font(11, True), (255, 255, 255))
+        return img
+    def move(self, dx, dy):
+        now = time.time(); self.step = min(48, self.step + 6) if now - self.last_move < 0.3 else 8; self.last_move = now
+        self.px = max(0, min(479, self.px + dx * self.step)); self.py = max(0, min(639, self.py + dy * self.step))
+        try: xinp().move(self.px, self.py)
+        except Exception as e: self.say('X input: ' + str(e)[:30])
+    def sendkey(self, name, **kw):
+        try: xinp().key(name, **kw)
+        except Exception as e: self.say('X input: ' + str(e)[:30])
+    def options(self):
+        def keys():
+            ks = [('Enter', 'Return', {}), ('Escape', 'Escape', {}), ('Tab', 'Tab', {}), ('Backspace', 'BackSpace', {}), ('Delete', 'Delete', {}), ('Ctrl+C', 'c', {'ctrl': True}), ('Ctrl+V', 'v', {'ctrl': True}),
+                  ('Ctrl+A', 'a', {'ctrl': True}), ('Ctrl+S', 's', {'ctrl': True}), ('Ctrl+Z', 'z', {'ctrl': True}), ('Alt+F4', 'F4', {'alt': True}), ('F5', 'F5', {})]
+            return ('popopen', Popup('Keys', [(n, (lambda k=k, kw=kw: (self.sendkey(k, **kw), 'popback')[1])) for n, k, kw in ks]))
+        def windows():
+            ws = xinp().windows() if jgmx else []
+            return ('popopen', Popup('Windows', [(t[:26] or w, (lambda w=w: (xinp().focus(w), 'popback')[1])) for w, t in ws] or [('(no windows)', lambda: 'popback')]))
+        def zoom(): self.zoom = 'fit' if self.zoom != 'fit' else '1:1'; CFG['x_zoom'] = self.zoom; save_cfg(); return 'popback'
+        def mode(): self.kb = not self.kb; return 'popback'
+        def quitx(): xsrv().stop(); xinp().close(); _X['inp'] = None; return 'back'
+        return [('Type text...', lambda: ('popopen', Editor('Type', '', on_done=lambda t: threading.Thread(target=lambda: xinp().type_text(t), daemon=True).start()))), ('Keys...', keys), ('Windows...', windows),
+                ('Zoom: ' + ('fit' if self.zoom == 'fit' else '1:1 (pan)'), zoom), ('Mode: ' + ('keyboard' if self.kb else 'pointer'), mode),
+                ('Close window', lambda: (xinp().close_active(), 'popback')[1]), ('Quit X (free memory)', quitx)]
+    def key(self, k):
+        if k == 'END':
+            if self.kb: self.kb = False; self.say('Pointer mode'); return None
+            return 'back'
+        if self.kb:
+            if k in ('UP', 'DOWN', 'LEFT', 'RIGHT'): self.sendkey({'UP': 'Up', 'DOWN': 'Down', 'LEFT': 'Left', 'RIGHT': 'Right'}[k])
+            elif k == 'OK': self.sendkey('Return')
+            elif k == 'RSK': self.sendkey('BackSpace')
+            elif k in T9:
+                now = time.time(); ch = T9[k]
+                if self.mt.last == k and now - self.mt.t < 0.9: self.sendkey('BackSpace'); self.mt.i = (self.mt.i + 1) % len(ch)
+                else: self.mt.i = 0
+                self.mt.last = k; self.mt.t = now; self.sendkey(ch[self.mt.i])
+            return None
+        if k == 'UP': self.move(0, -1)
+        elif k == 'DOWN': self.move(0, 1)
+        elif k == 'LEFT': self.move(-1, 0)
+        elif k == 'RIGHT': self.move(1, 0)
+        elif k in ('OK', '5'):
+            try: xinp().click(1)
+            except Exception as e: self.say('X input: ' + str(e)[:30])
+        elif k == 'CALL':
+            try: xinp().click(1, double=True)
+            except Exception: pass
+        elif k == '0':
+            try: xinp().click(3)
+            except Exception: pass
+        elif k == '2':
+            try: xinp().wheel(True)
+            except Exception: pass
+        elif k == '8':
+            try: xinp().wheel(False)
+            except Exception: pass
+        elif k == '1': self.zoom = 'fit' if self.zoom != 'fit' else '1:1'; CFG['x_zoom'] = self.zoom; save_cfg(); self.say('Zoom: ' + ('fit' if self.zoom == 'fit' else '1:1'))
+        elif k == '#': self.kb = True; self.say('Keyboard mode')
+        elif k == '*': self.sendkey('Escape')
+        elif k == 'RSK': return 'back'
+        return None
+
+class IconList(PickList):
+    """PickList whose rows may carry an icon: rows = [(title, sub, icon or None)]"""
+    def draw(self, d, img):
+        rows = self.rows() if callable(self.rows) else self.rows
+        self.sel = min(self.sel, max(0, len(rows) - 1)); top = max(0, self.sel - 5)
+        for i, row in enumerate(rows[top:top + 6]):
+            t, sub = row[0], row[1]; ic = row[2] if len(row) > 2 else None; y = 28 + i * 40; sel = top + i == self.sel
+            if sel: rrect(d, (3, y - 1, W - 3, y + 37), fill=PANEL)
+            x0 = 8
+            if ic is not None: img.paste(ic, (6, y + 1), ic); x0 = 52
+            d.text((x0, y + 2), fit(d, t, font(13, True), W - x0 - 6), font=font(13, True), fill=FG)
+            if sub: d.text((x0, y + 20), fit(d, sub, font(10), W - x0 - 6), font=font(10), fill=DIM)
+        if not rows: ctext(d, W / 2, 120, 'Nothing here', font(14), DIM)
+        st = self.status() if callable(self.status) else self.status
+        if st: d.rectangle((0, H - 44, W, H - 27), fill=BG); d.text((6, H - 42), fit(d, st, font(11), W - 12), font=font(11), fill=ACC)
+
+class ApplicationsApp(IconList):
+    """Installed graphical apps (the .desktop files of installed packages), grouped by category."""
+    def __init__(self):
+        self.group = 'All'; self.apps_ = jgmx.apps() if jgmx else []; self.msg = ''
+        super().__init__('Applications', self.rows_, self.pick_, self.opts_, status=lambda: self.msg or ('X server not installed - Software > Install X' if not x_ready() else ''))
+    def shown(self): return [a for a in self.apps_ if self.group == 'All' or jgmx.group_of(a['cats']) == self.group]
+    def rows_(self): return [(a['name'], a['comment'] or ', '.join(a['cats'][:3]), jgmx.icon(a, 38)) for a in self.shown()]
+    def pick_(self, i): return ('open', x_launch(self.shown()[i]))
+    def opts_(self):
+        groups = ['All'] + sorted({jgmx.group_of(a['cats']) for a in self.apps_})
+        o = [('Category: ' + self.group, lambda: (setattr(self, 'group', groups[(groups.index(self.group) + 1) % len(groups)]), setattr(self, 'sel', 0), 'popback')[2]),
+             ('Pin to home / menu', self.pin), ('Open X screen', lambda: ('popopen', x_launch(None))), ('Rescan apps', lambda: (setattr(self, 'apps_', jgmx.apps()), 'popback')[1])]
+        return o
+    def pin(self):
+        sh_ = self.shown()
+        if not sh_: return 'popback'
+        a = sh_[self.sel]; pins = CFG.setdefault('x_pinned', [])
+        if a['id'] not in pins: pins.append(a['id']); save_cfg(); register_x_apps()
+        self.msg = 'Pinned ' + a['name']; return 'popback'
+def register_x_apps():
+    """pinned graphical apps become entries of the app list (and can be put on the home screen)"""
+    if not jgmx: return
+    by = {a['id']: a for a in jgmx.apps()}
+    for aid in CFG.get('x_pinned', []):
+        a = by.get(aid)
+        if not a: continue
+        meta = ('x_' + aid, a['name'], '', (90, 100, 120), (lambda a=a: x_launch(a)))
+        for i, m in enumerate(APP_META):
+            if m[0] == 'x_' + aid: APP_META[i] = meta; break
+        else: APP_META.append(meta)
+        APP_BY_ID[meta[0]] = meta
+    ALL_APPS_META[:] = [(a[0], a[1]) for a in APP_META]
+
+# ---- software center (catalog from Debian's AppStream data, installs through apt)
+FEATURED = ['xterm', 'lxterminal', 'galculator', 'mousepad', 'pcmanfm', 'gpicview', 'geany', 'dillo', 'netsurf-gtk', 'xpdf', 'atril', 'sylpheed', 'hexchat', 'audacious', 'abiword', 'gnumeric',
+            'gnome-mines', 'gnome-sudoku', 'gnome-2048', 'quadrapassel', 'gweled', 'xboard', 'gnugo', 'frozen-bubble', 'pingus', 'fceux', 'dosbox', 'osmo', 'orage', 'lxtask', 'mtpaint', 'fbreader']
+_cat = {'t': 0, 'apps': None}
+def catalog():
+    if _cat['apps'] is None:
+        for p in (DATA + '/catalog.json', '/opt/jgm/catalog.json'):
+            try: _cat['apps'] = json.load(open(p))['apps']; break
+            except Exception: continue
+        else: _cat['apps'] = []
+    return _cat['apps']
+_inst = {'t': 0, 's': set()}
+def installed_pkgs():
+    if time.time() - _inst['t'] > 20:
+        _inst['s'] = set(sh("dpkg-query -W -f='${Package} ${Status}\\n' 2>/dev/null | awk '$NF==\"installed\"{print $1}'", 30).split()); _inst['t'] = time.time()
+    return _inst['s']
+def fmt_kb(kb): return '%.1f MB' % (kb / 1024) if kb >= 1024 else '%d KB' % kb
+def free_root_mb(): return int(sh("df -m / | awk 'NR==2{print $4}'") or 0)
+APT_ENV = 'DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none '
+class AptJob:
+    """one apt command at a time; .status is the latest line, .done/.ok when finished"""
+    cur = None
+    def __init__(self, cmd, label, after=None):
+        self.cmd = cmd; self.label = label; self.status = label + '...'; self.done = False; self.ok = False; self.after = after; AptJob.cur = self
+        threading.Thread(target=self.run, daemon=True).start()
+    def run(self):
+        try:
+            p = subprocess.Popen(['sh', '-c', APT_ENV + self.cmd + ' 2>&1'], stdout=subprocess.PIPE, text=True, bufsize=1)
+            for l in p.stdout:
+                l = l.strip()
+                m = re.match(r'(Get:\d+|Unpacking|Setting up|Preparing|Selecting|Removing|Reading|Building|Processing)\s*(.*)', l)
+                if m: self.status = (m.group(1).split(':')[0] + ' ' + m.group(2))[:48]
+            p.wait(); self.ok = p.returncode == 0
+        except Exception as e: self.status = str(e)[:40]
+        self.status = ('Done: ' if self.ok else 'Failed: ') + self.label; self.done = True; _inst['t'] = 0
+        if self.after: self.after(self.ok)
+def lists_fresh():
+    try: return time.time() - os.path.getmtime('/var/lib/apt/lists/lock') < 86400 * 2 or any(f.endswith('Packages') or f.endswith('Packages.xz') or f.endswith('Packages.lz4') for f in os.listdir('/var/lib/apt/lists'))
+    except Exception: return False
+def apt_update_cmd(): return 'sh /opt/jgm/apt-setup.sh; apt-get update -o Acquire::Languages=none'
+
+class SoftDetail(App):
+    title = 'Software'; left = 'Actions'; tick = 1
+    def __init__(self, a):
+        self.a = a; self.job = None; self.plan = None; self.msg = ''; self.title = a['n'][:20]
+    def installed(self): return self.a['p'] in installed_pkgs()
+    def desktop_app(self):
+        if not jgmx: return None
+        files = sh('dpkg -L %s 2>/dev/null | grep "\\.desktop$"' % self.a['p']).split()
+        by = {x['file']: x for x in jgmx.apps()}
+        return next((by[f] for f in files if f in by), None)
+    def options(self):
+        if self.job and not self.job.done: return [('Working...', lambda: 'popback')]
+        if self.installed():
+            o = [('Remove', self.remove)]
+            if self.desktop_app(): o.insert(0, ('Open', lambda: ('popopen', x_launch(self.desktop_app()))))
+            return o
+        return [('Install', self.plan_install)]
+    def plan_install(self):
+        def work():
+            self.msg = 'Checking...'
+            out = sh('apt-get -s install --no-install-recommends %s 2>&1' % self.a['p'], 120)
+            m = re.search(r'After this operation, ([\d.,]+) (kB|MB|GB) of additional disk space', out); inst = len(re.findall(r'^Inst ', out, re.M))
+            if 'Unable to locate' in out or ('E:' in out and not m): self.msg = 'Not available (run Update lists)'; return
+            need = float(m.group(1).replace(',', '')) * {'kB': 1 / 1024, 'MB': 1, 'GB': 1024}[m.group(2)] if m else 0; free = free_root_mb()
+            self.plan = (need, inst, free); self.msg = ''
+            if need > free - 20: self.msg = 'Not enough space: needs %.0f MB, %d MB free' % (need, free); self.plan = None
+        threading.Thread(target=work, daemon=True).start(); return 'popback'
+    def go_install(self):
+        steps = 'sh /opt/jgm/apt-setup.sh; '
+        if not lists_fresh(): steps = apt_update_cmd() + ' && '
+        self.job = AptJob(steps + 'apt-get install -y --no-install-recommends ' + self.a['p'], 'Install ' + self.a['n'][:20], lambda ok: notify('Installed' if ok else 'Install failed', self.a['n'])); self.plan = None
+    def remove(self):
+        self.job = AptJob('apt-get remove -y --autoremove ' + self.a['p'], 'Remove ' + self.a['n'][:20], lambda ok: notify('Removed' if ok else 'Remove failed', self.a['n'])); return 'popback'
+    def draw(self, d, img):
+        a = self.a; ic = jgmx.icon({'id': a['p'], 'name': a['n'], 'icon': a.get('i', '')}, 44) if jgmx else None
+        if ic is not None: img.paste(ic, (8, 30), ic)
+        d.text((60, 32), fit(d, a['n'], font(15, True), W - 66), font=font(15, True), fill=FG); d.text((60, 54), a['p'][:30], font=font(10), fill=DIM)
+        y = 86
+        for l in wrap(d, a['s'] or '(no description)', font(12), W - 16)[:5]: d.text((8, y), l, font=font(12), fill=FG); y += 16
+        d.text((8, 178), 'Category: ' + ', '.join(a['c'][:3]), font=font(11), fill=DIM); d.text((8, 194), 'Size: ' + fmt_kb(a['z']) + '   (free space ' + str(free_root_mb()) + ' MB)', font=font(11), fill=DIM)
+        st = 'Installed' if self.installed() else 'Not installed'; ctext(d, W / 2, 222, st, font(14, True), ACC if self.installed() else FG)
+        if self.job: ctext(d, W / 2, 250, self.job.status, font(11), WARN if self.job.done and not self.job.ok else ACC)
+        elif self.msg: ctext(d, W / 2, 250, self.msg, font(11), WARN)
+        if self.plan and not self.job:
+            need, n, free = self.plan; ctext(d, W / 2, 246, 'Install %d package%s, %.0f MB?' % (n, '' if n == 1 else 's', need), font(12, True), WARN); ctext(d, W / 2, 262, 'OK = install   RSK = cancel', font(11), DIM)
+    def key(self, k):
+        if self.plan and not self.job:
+            if k == 'OK': self.go_install(); return None
+            if k in ('RSK', 'END'): self.plan = None; return None
+        if k in ('RSK', 'END'): return 'back'
+        if k == 'OK': return ('open', Popup(self.a['n'][:20], self.options()))
+
+def soft_rows(apps):
+    ins = installed_pkgs()
+    return [(a['n'] + ('  [installed]' if a['p'] in ins else ''), (a['s'] or '') + ('' if not a['z'] else '  (' + fmt_kb(a['z']) + ')')) for a in apps]
+class SoftList(PickList):
+    def __init__(self, title, apps, searchable=True):
+        self.apps = apps
+        super().__init__(title, lambda: soft_rows(self.apps), lambda i: ('open', SoftDetail(self.apps[i])), (lambda: [('Search in this list', lambda: ('popopen', Editor('Search', '', on_done=self.search)))]) if searchable else None,
+                         status=lambda: '%d apps' % len(self.apps))
+        self.all = list(apps)
+    def search(self, q):
+        q = q.lower().strip(); self.apps = [a for a in self.all if q in a['n'].lower() or q in a['s'].lower() or q in a['p'].lower()] if q else list(self.all); self.sel = 0
+def soft_by_group(name):
+    return [a for a in catalog() if jgmx.group_of(a['c']) == name] if jgmx else []
+class SoftHome(PickList):
+    """Software: Featured / categories / search / installed / updates, like a desktop app store"""
+    def __init__(self):
+        self.msg = ''
+        super().__init__('Software', self.rows_, self.pick_, self.opts_, status=lambda: (AptJob.cur.status if AptJob.cur and not AptJob.cur.done else self.msg) or ('%d apps in the catalog' % len(catalog())))
+    def groups(self): return [g for g, _ in jgmx.CATEGORY_GROUPS] if jgmx else []
+    def rows_(self):
+        r = [('Featured', 'small apps that suit this phone'), ('Search', 'by name, summary or package')]
+        for g in self.groups(): r.append((g, '%d apps' % len(soft_by_group(g))))
+        r += [('Installed apps', 'graphical apps on the phone'), ('Updates', 'upgrade installed packages'), ('Install X (graphical apps)', 'X server, window manager, terminal'), ('jgmDeb apps', 'the jgmDeb Store')]
+        return r
+    def pick_(self, i):
+        g = self.groups(); n = len(g)
+        if i == 0:
+            by = {a['p']: a for a in catalog()}; return ('open', SoftList('Featured', [by[p] for p in FEATURED if p in by]))
+        if i == 1: return ('open', Editor('Search apps', '', on_done=lambda q: setattr(self, 'pending', ('open', SoftList('Search: ' + q, [a for a in catalog() if q.lower() in a['n'].lower() or q.lower() in a['s'].lower() or q.lower() in a['p'].lower()])))))
+        if 2 <= i < 2 + n: return ('open', SoftList(g[i - 2], soft_by_group(g[i - 2])))
+        j = i - 2 - n
+        if j == 0: return ('open', ApplicationsApp())
+        if j == 1: return ('open', SoftUpdates())
+        if j == 2: return ('open', XInstall())
+        if j == 3: return ('open', StoreApp())
+    def opts_(self): return [('Update package lists', lambda: (AptJob(apt_update_cmd(), 'Update lists'), 'popback')[1]), ('Update catalog', lambda: (threading.Thread(target=self.fetch_catalog, daemon=True).start(), 'popback')[1])]
+    def fetch_catalog(self):
+        try:
+            self.msg = 'Downloading catalog...'; raw = http_get(store_url() + 'catalog.json', 30, True); json.loads(raw); open(DATA + '/catalog.json', 'wb').write(raw); _cat['apps'] = None; self.msg = 'Catalog updated: %d apps' % len(catalog())
+        except Exception as e: self.msg = 'Catalog update failed: ' + str(e)[:30]
+    def key(self, k):
+        p = getattr(self, 'pending', None)
+        if p: self.pending = None; return p
+        return super().key(k)
+class SoftUpdates(App):
+    title = 'Updates'; left = 'Actions'; tick = 1
+    def __init__(self): self.n = None; self.msg = 'Checking...'; self.job = None; threading.Thread(target=self.check, daemon=True).start()
+    def check(self):
+        self.msg = 'Updating lists...'; sh(apt_update_cmd(), 300); out = sh('apt-get -s upgrade 2>&1', 120); self.pk = re.findall(r'^Inst (\S+)', out, re.M); self.n = len(self.pk); self.msg = ''
+    def options(self): return [('Upgrade all', self.upgrade)] if self.n and not self.job else []
+    def upgrade(self):
+        self.job = AptJob('apt-get upgrade -y --no-install-recommends', 'Upgrade %d packages' % self.n, lambda ok: notify('Upgrade finished' if ok else 'Upgrade failed', '%d packages' % self.n)); return 'popback'
+    def draw(self, d, img):
+        ctext(d, W / 2, 50, 'Updates', font(22, True), ACC)
+        if self.n is None: ctext(d, W / 2, 120, self.msg, font(13), FG); return
+        ctext(d, W / 2, 100, '%d upgradable package%s' % (self.n, '' if self.n == 1 else 's'), font(15, True), FG)
+        for i, p in enumerate(self.pk[:8]): d.text((14, 130 + i * 15), p[:34], font=font(11), fill=DIM)
+        if self.job: ctext(d, W / 2, 270, self.job.status, font(11), ACC)
+    def key(self, k):
+        if k in ('RSK', 'END'): return 'back'
+        if k == 'OK' and self.options(): return ('open', Popup('Updates', self.options()))
+class XInstall(App):
+    title = 'Install X'; left = 'Actions'; tick = 1
+    def __init__(self): self.job = None
+    def options(self): return [] if x_ready() or self.job else [('Install', self.install)]
+    def install(self):
+        steps = '' if lists_fresh() else apt_update_cmd() + ' && '
+        self.job = AptJob(steps + 'apt-get install -y --no-install-recommends ' + ' '.join(X_PACKAGES), 'Install X', lambda ok: notify('X installed' if ok else 'X install failed', 'Applications can now run')); return 'popback'
+    def draw(self, d, img):
+        ctext(d, W / 2, 50, 'X server', font(22, True), ACC)
+        ctext(d, W / 2, 100, 'installed' if x_ready() else 'not installed', font(15, True), FG)
+        for i, l in enumerate(wrap(d, 'Runs graphical apps on a virtual screen shown on the phone. Needs: ' + ', '.join(X_PACKAGES), font(11), W - 20)[:6]): d.text((10, 140 + i * 15), l, font=font(11), fill=DIM)
+        if self.job: ctext(d, W / 2, 260, self.job.status, font(11), ACC)
+    def key(self, k):
+        if k in ('RSK', 'END'): return 'back'
+        if k == 'OK' and self.options(): return ('open', Popup('Install X', self.options()))
+
 APP_META = [  # id, name, glyph, colour, factory
     ('voicemail', 'Voicemail', '☎', (120, 130, 240), lambda: Stub('Voicemail', ['Not available yet', 'needs the modem'])),
     ('phone', 'Phone', '☎', (60, 190, 120), Phone), ('contacts', 'Contacts', '☺', (70, 150, 240), Contacts),
@@ -1962,13 +2295,14 @@ APP_META = [  # id, name, glyph, colour, factory
     ('torch', 'Flashlight', '☀', (250, 220, 100), Torch), ('snake', 'Snake', '●', (90, 210, 90), Snake),
     ('camera', 'Camera', '◉', (200, 90, 90), lambda: Stub('Camera', ['Camera not supported yet', 'needs the vendor camera stack'])),
     ('music', 'Music', '♫', (150, 110, 220), MusicApp), ('radio', 'Radio', '', (110, 200, 190), Radio), ('news', 'News', '', (240, 120, 100), FeedList), ('weather', 'Weather', '', (90, 170, 245), Weather),
-    ('nightstand', 'Nightstand', '', (60, 50, 130), NightClock), ('store', 'Store', '', (70, 140, 220), StoreApp), ('ytdl', 'YT download', '', (240, 80, 80), YtDl), ('notifs', 'Notifications', '', (255, 190, 80), NotifApp), ('hotspot', 'Hotspot', '', (120, 210, 150), Hotspot),
+    ('nightstand', 'Nightstand', '', (60, 50, 130), NightClock), ('applications', 'Applications', '', (90, 120, 200), ApplicationsApp), ('software', 'Software', '', (230, 120, 60), SoftHome), ('store', 'jgmDeb Store', '', (70, 140, 220), StoreApp), ('ytdl', 'YT download', '', (240, 80, 80), YtDl), ('notifs', 'Notifications', '', (255, 190, 80), NotifApp), ('hotspot', 'Hotspot', '', (120, 210, 150), Hotspot),
     ('wifi', 'WiFi', '≈', (80, 170, 240), WifiApp),
     ('monitor', 'Monitor', '', (60, 80, 100), lambda: Monitor()), ('battery', 'Battery', '', (110, 224, 140), lambda: BatteryApp()),
     ('alarm', 'Alarm', '', (255, 150, 120), lambda: AlarmApp())]
 ALL_APPS_META = [(a[0], a[1]) for a in APP_META]
 APP_BY_ID = {a[0]: a for a in APP_META}
 load_installed_apps()
+register_x_apps()
 
 class Grid(App):
     """Home screen (9 configurable keys) or all-apps view."""
@@ -2079,7 +2413,7 @@ def main():
             if BATT.shutdown_due(): save_cfg(); BATT.save(now); subprocess.call('sync; poweroff', shell=True)
             if isinstance(stack[-1], (BatteryApp, Monitor, Grid)) or S['locked']: dirty = True
         app = cur()
-        if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock)):
+        if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock, XView)):
             if ns_wanted() and not (ns_mode() == 1 and NS_DISMISSED[0]): to_nightstand(); dirty = True; continue
             lock(); screen(False)
         if now - last_ns > 5:                                   # timed mode: show the clock when the window opens, even if the screen is already off

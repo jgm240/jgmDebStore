@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated": "2026-11-13",
+ "updated": "2026-11-23",
  "apps": [
   {
    "id": "jwlink",
@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.4.0",
-  "file": "packages/jgmdeb-system-1.4.0.tar.gz",
-  "sha256": "cfc7531951ad761189fdb39d9dcd736fe899133da2c16c250579fe9850c8ac97",
-  "size": 76439,
-  "notes": "Call audio: runs the stock voice calibration loader (needs the local Android runtime in /system) so the voice DSP gets its calibration."
+  "version": "1.5.0",
+  "file": "packages/jgmdeb-system-1.5.0.tar.gz",
+  "sha256": "a8589cb2490f9eb6223101412c699a052b0a6040bc3706259cc4a12b97677ca1",
+  "size": 156543,
+  "notes": "X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data."
  }
 }
