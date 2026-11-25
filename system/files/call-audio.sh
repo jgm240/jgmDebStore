@@ -3,7 +3,7 @@
 c() { amixer -q -c 0 cset name="$1" "$2" 2>/dev/null; }
 stop() { pkill -f "aplay -D hw:0,2" 2>/dev/null; pkill -f "arecord -D hw:0,2" 2>/dev/null; }
 off() {
-  stop
+  echo off > /run/callaudio.mode; stop
   c "PRI_MI2S_RX_Voice Mixer CSVoice" 0; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 0
   c "RX1 MIX1 INP1" ZERO; c "RX3 MIX1 INP1" ZERO; c "RDAC2 MUX" ZERO; c "EAR_S" ZERO; c "EAR PA Gain" POS_1P5_DB; c "SPK DAC Switch" 0; c "Speaker Boost" DISABLE
   c "DEC1 MUX" ZERO; c "IIR1 INP1 MUX" ZERO
@@ -11,7 +11,7 @@ off() {
 case "$1" in
   off) off ;;
   handset|speaker)
-    off
+    off; echo $1 > /run/callaudio.mode
     c "MI2S_RX Channels" One; c "MI2S_TX Channels" One
     # load the stock voice calibration for this device pair (service keeps it alive; handset = ACDB ids 7/4, speaker phone = 14/11)
     if [ "$1" = handset ]; then sh /opt/jgm/jgmcal-daemon.sh send 7 4; else sh /opt/jgm/jgmcal-daemon.sh send 14 11; fi
@@ -23,6 +23,14 @@ case "$1" in
     if [ "$1" = handset ]; then c "RX1 MIX1 INP1" RX1; c "RDAC2 MUX" RX1; c "RX1 Digital Volume" 84; c "EAR PA Gain" POS_6_DB; c "EAR_S" Switch
     else c "RX3 Digital Volume" 60; c "RX3 MIX1 INP1" RX1; c "SPK DAC Switch" 1; c "Speaker Boost" ENABLE; fi
     # the voice session on the DSP starts when the CS-Voice PCM device (hw:0,2) is opened for playback and capture
-    (nohup aplay -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/zero >/dev/null 2>&1 &)
-    (nohup arecord -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/null >/dev/null 2>&1 &) ;;
+    # (right after the modem boots its voice services are not up yet: the kernel logs "voice_apr_register: Unable to register" and the call has no audio -> close and retry)
+    for try in 1 2 3 4 5 6 7 8; do
+      [ "$(cat /run/callaudio.mode 2>/dev/null)" = "$1" ] || break
+      N=$(dmesg | grep -c "voice_apr_register: Unable")
+      (nohup aplay -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/zero >/dev/null 2>&1 &)
+      (nohup arecord -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/null >/dev/null 2>&1 &)
+      sleep 1.5
+      [ "$(dmesg | grep -c 'voice_apr_register: Unable')" -le "$N" ] && break
+      echo "$(date +%T) voice not ready, retry $try" >> /data/jgm/call-debug.log; stop; sleep 3
+    done ;;
 esac

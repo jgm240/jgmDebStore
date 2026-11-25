@@ -5,3 +5,5 @@ X server support (Xvfb viewer with keypad pointer/keyboard), Applications launch
 1.5.2: Big package files can live on the SD card (/media/sd/jgmdeb): apt installs are moved there automatically (sd-offload.py, apt post-invoke hook); core system packages are never moved. X window manager start fixed, xterm font.
 
 1.5.3: Menus: the selected row is always fully visible (also the last one) and grows to show its whole text when it is too long; row sizes follow the text size setting.
+
+1.5.4: Call audio: if the modem's voice services are not up yet (call placed soon after the modem started) the voice path is retried until it registers, so the call gets sound.
