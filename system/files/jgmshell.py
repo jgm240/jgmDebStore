@@ -235,16 +235,39 @@ class Popup(App):
 
 class ListMenu(App):
     """A settings-style list. items: (label, value_fn or None, action_fn). action returns a key result."""
-    def __init__(self, title, items): self.title = title; self.items = items; self.sel = 0; self.left = ''; self.right = 'Back'
+    def __init__(self, title, items): self.title = title; self.items = items; self.sel = 0; self.left = ''; self.right = 'Back'; self.top = 0
+    def layout(self, d):
+        """-> [(label lines, value lines, height)] for every item; the selected one grows to show all of its text, the others are cut to one line"""
+        lf, vf = font(14), font(12); lh = lf.size + 4; avail = W - 20; out = []
+        for i, it in enumerate(self.items):
+            v = str(it[1]()) if it[1] else ''; lab = it[0]
+            if tw(d, lab, lf) + (tw(d, v, vf) + 10 if v else 0) <= avail: out.append(([lab], [v] if v else [], lh + 10, True)); continue
+            if i != self.sel:
+                vw = min(tw(d, v, vf), avail * 0.45) if v else 0
+                out.append(([fit(d, lab, lf, avail - vw - 10)], [fit(d, v, vf, vw)] if v else [], lh + 10, True)); continue
+            ll = wrap(d, lab, lf, avail)[:3]; vl = wrap(d, v, vf, avail)[:3] if v else []
+            out.append((ll, vl, len(ll) * lh + len(vl) * (vf.size + 3) + 10, False))
+        return out
     def draw(self, d, img):
-        top = max(0, self.sel - 9)
-        for i, it in enumerate(self.items[top:top + 10]):
-            y = 30 + i * 28; sel = top + i == self.sel
-            if sel: rrect(d, (3, y - 2, W - 3, y + 24), fill=PANEL)
-            d.text((10, y + 3), fit(d, it[0], font(14), 130), font=font(14), fill=FG)
-            if it[1]:
-                v = str(it[1]())
-                d.text((W - 8 - tw(d, v, font(12)), y + 5), fit(d, v, font(12), 96), font=font(12), fill=ACC)
+        lay = self.layout(d); area = H - 28 - 27; self.sel = max(0, min(self.sel, len(lay) - 1)) if lay else 0
+        if self.top > self.sel: self.top = self.sel
+        while self.top < self.sel and sum(x[2] for x in lay[self.top:self.sel + 1]) > area: self.top += 1
+        lf, vf = font(14), font(12); y = 27
+        for i in range(self.top, len(lay)):
+            ll, vl, h, single = lay[i]
+            if y + h > 27 + area and i != self.sel: break
+            sel = i == self.sel
+            if sel: rrect(d, (3, y - 1, W - 3, y + h - 3), fill=PANEL)
+            if single:
+                d.text((10, y + 4), ll[0], font=lf, fill=FG)
+                if vl: d.text((W - 8 - tw(d, vl[0], vf), y + 6), vl[0], font=vf, fill=ACC)
+            else:
+                yy = y + 4
+                for l in ll: d.text((10, yy), l, font=lf, fill=FG); yy += lf.size + 4
+                for l in vl: d.text((10, yy), l, font=vf, fill=ACC); yy += vf.size + 3
+            y += h
+        if self.top > 0: d.polygon([(W - 9, 28), (W - 4, 28), (W - 6.5, 24)], fill=DIM)
+        if y > 27 + area or self.top + sum(1 for _ in lay[self.top:]) > 0 and y >= 27 + area: d.polygon([(W - 9, H - 33), (W - 4, H - 33), (W - 6.5, H - 29)], fill=DIM)
     def key(self, k):
         if k == 'UP': self.sel = max(0, self.sel - 1)
         elif k == 'DOWN': self.sel = min(len(self.items) - 1, self.sel + 1)

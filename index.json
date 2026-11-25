@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.5.2",
-  "file": "packages/jgmdeb-system-1.5.2.tar.gz",
-  "sha256": "64de5027e1342f4ba1e12c673ab25a4d4ef2842dbbcdf0fa5a7683bcca2488d2",
-  "size": 162499,
-  "notes": "X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data.\n\n1.5.1: Power saver (Settings > Power saver): modes Off/Light/Standard/Deep. After the screen is off: CPU to lowest speeds, extra cores offline, deep CPU idle allowed; WiFi off after 1 min; Deep suspends with an RTC wake-up timer. Skipped on charger, during calls/ssh/adb. Disabled by default until tested on the phone. Kill switch: /data/jgm/no-powersave. Log: /data/jgm/power.log.\n\n1.5.2: Big package files can live on the SD card (/media/sd/jgmdeb): apt installs are moved there automatically (sd-offload.py, apt post-invoke hook); core system packages are never moved. X window manager start fixed, xterm font."
+  "version": "1.5.3",
+  "file": "packages/jgmdeb-system-1.5.3.tar.gz",
+  "sha256": "864ec5b7048febbcb71e1f0837c1a437107b7c5b071b8c33d35cfdff052d5c4f",
+  "size": 163057,
+  "notes": "X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data.\n\n1.5.1: Power saver (Settings > Power saver): modes Off/Light/Standard/Deep. After the screen is off: CPU to lowest speeds, extra cores offline, deep CPU idle allowed; WiFi off after 1 min; Deep suspends with an RTC wake-up timer. Skipped on charger, during calls/ssh/adb. Disabled by default until tested on the phone. Kill switch: /data/jgm/no-powersave. Log: /data/jgm/power.log.\n\n1.5.2: Big package files can live on the SD card (/media/sd/jgmdeb): apt installs are moved there automatically (sd-offload.py, apt post-invoke hook); core system packages are never moved. X window manager start fixed, xterm font.\n\n1.5.3: Menus: the selected row is always fully visible (also the last one) and grows to show its whole text when it is too long; row sizes follow the text size setting."
  }
 }
