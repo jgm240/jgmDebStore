@@ -70,10 +70,14 @@ class Watcher(threading.Thread):
                     st = S.setup(20)
                     if not st['ok']: time.sleep(15); continue
                     register(); ready = True
-                for mid, tl in svc().poll_ind(1.0):                     # indications arrive here; also poll state so nothing is missed
+                inds = svc().poll_ind(3.0)                              # blocks until an indication arrives (cheap while idle)
+                for mid, tl in inds:
                     debug('indication 0x%x %s' % (mid, {hex(k): v.hex() for k, v in tl.items()}))
                     if mid == 0x2e and 0x2e in tl and len(tl[0x2e]) >= 3:
                         b = tl[0x2e]; END_REASONS[b[1]] = b[3:3 + b[2] * 2].decode('utf-16-le', 'ignore')
+                now = time.time()
+                if not inds and not self.seen and now - getattr(self, 'last_poll', 0) < 10: continue      # idle: only ask the modem for the call list every 10 s
+                self.last_poll = now
                 cs = {c['id']: c for c in calls()}
                 for cid, c in cs.items():
                     if cid not in self.seen and c['dir'] == 'in' and c['state'] in (2, 7, 10): self.on_incoming(c)

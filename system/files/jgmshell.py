@@ -344,6 +344,9 @@ class Phone(App):
         elif k in ('CALL', 'OK'): return ('open', Calling(self.num)) if self.num else None
 try: import jgmvoice, jgmsim
 except Exception: jgmvoice = jgmsim = None
+try:
+    import jgmsave; PWR = jgmsave.Power()
+except Exception: jgmsave = PWR = None
 CALL_ANSWERED = set()
 def contact_name(num):
     n = re.sub(r'[^0-9+]', '', num or '')
@@ -936,6 +939,35 @@ def mobile_menu():
     return ListMenu('Mobile network', [('Network mode', mode_name, choose), ('Connection', stat_text, lambda: None),
                                        ('About modes', None, lambda: ('open', TextBox('Network modes', '2G only / 3G only / 2G + 3G: plain circuit-switched voice. Calls work like on an old phone. 2G + 3G is the default. Many operators have switched 3G off, so 3G only may show no service.\n\n4G / VoLTE: allows LTE. Voice on LTE needs an IMS data connection that this phone does not set up yet, so calls made there fail with "busy". Use it only if 2G/3G is gone in your area (and expect no calls).\n\nThe modem must be running (Settings > Modem / audio).')))])
 
+PS_MODES = ['Off', 'Light (CPU + idle)', 'Standard (+ WiFi sleep)', 'Deep (+ suspend)']
+def power_saver_menu():
+    def cyc_mode():
+        CFG['ps_mode'] = (CFG.get('ps_mode', 0) + 1) % 4; save_cfg()
+        if CFG['ps_mode'] == 0 and PWR: PWR.screen_on()
+    def drain():
+        v = PWR.drain_per_hour() if PWR else None
+        return 'measuring...' if v is None else '%.1f %%/h' % v
+    def susp():
+        if not PWR: return None
+        def work():
+            n = notify
+            dt = PWR.suspend_once(30, 60); n('Suspend test', 'slept %.0f s (asked for 30)' % dt if dt else 'could not suspend (see /data/jgm/power.log)')
+        wr(LCD, 0); threading.Thread(target=lambda: (time.sleep(1), work(), wr(LCD, CFG['brightness'])), daemon=True).start(); return None
+    def live_idle():
+        cur = rd('/sys/module/lpm_levels/parameters/sleep_disabled', 'Y'); wr('/sys/module/lpm_levels/parameters/sleep_disabled', 'Y' if cur == 'N' else 'N')
+    def bright():
+        lv = [60, 120, 190, 255]; CFG['brightness'] = lv[(min(range(4), key=lambda i: abs(lv[i] - CFG['brightness'])) + 1) % 4]; save_cfg(); wr(LCD, CFG['brightness'])
+    def tout(): CFG['timeout'] = {15: 30, 30: 60, 60: 15, 0: 15}.get(CFG['timeout'], 15); save_cfg()
+    return ListMenu('Power saver', [('Mode', lambda: PS_MODES[CFG.get('ps_mode', 0)], cyc_mode),
+                                    ('Battery use', drain, lambda: None),
+                                    ('Screen timeout', lambda: ('%ds' % CFG['timeout']) if CFG['timeout'] else 'never', tout),
+                                    ('Brightness', lambda: '%d%%' % round(CFG['brightness'] * 100 / 255), bright),
+                                    ('Suspend with modem on', lambda: 'Yes' if CFG.get('ps_suspend_modem') else 'No', lambda: (CFG.__setitem__('ps_suspend_modem', not CFG.get('ps_suspend_modem')), save_cfg())[1]),
+                                    ('Deep CPU idle now', lambda: 'allowed' if rd('/sys/module/lpm_levels/parameters/sleep_disabled', 'Y') == 'N' else 'blocked', live_idle),
+                                    ('Last suspend', lambda: ('%.0f s (%d total)' % (PWR.last_suspend, PWR.suspends)) if PWR and PWR.last_suspend else 'none', lambda: None),
+                                    ('Test suspend (30 s)', None, susp),
+                                    ('How it works', None, lambda: ('open', TextBox('Power saver', 'Light: after the screen is off 8 s the CPU drops to its lowest speeds, extra cores go offline and the deep CPU idle state is allowed.\n\nStandard: also turns WiFi off after 1 minute (back when you wake the phone; skipped while an ssh/adb session is open or on the charger).\n\nDeep: also suspends the whole system while the screen is off, with a wake-up timer so it never sleeps forever. Skipped on the charger, during calls/downloads/music and (by default) while the modem is on, because the modem call wake-up is unproven.\n\nTest suspend sleeps 30 s: if the screen/keys are dead afterwards, wait for the timer or hold the power key 10 s. Create /data/jgm/no-powersave to disable everything.')))])
+
 class Settings(ListMenu):
     def __init__(self):
         items = [('Display & theme', None, lambda: ('open', make_settings())), ('Home screen keys', None, lambda: ('open', home_layout())),
@@ -946,6 +978,7 @@ class Settings(ListMenu):
                  ('Modem / audio', lambda: 'Running' if audio_ok() else 'Off', lambda: ('open', modem_menu())),
                  ('Bluetooth', lambda: 'BLE' if bt_available() else 'n/a', lambda: ('open', BluetoothApp())),
                  ('ADB', lambda: ('USB' if os.path.exists(DATA + '/adb-usb') else 'Off') + (' + WiFi' if os.path.exists(DATA + '/adb-tcp') else ''), lambda: ('open', adb_menu())),
+                 ('Power saver', lambda: PS_MODES[CFG.get('ps_mode', 0)].split(' ')[0], lambda: ('open', power_saver_menu())),
                  ('Software update', lambda: 'v' + os_version(), lambda: ('open', SystemUpdate())),
                  ('Sound', None, lambda: ('open', Stub('Sound', ['Audio is not working yet.', 'It needs the modem/audio DSP bring-up.']))),
                  ('Battery', None, lambda: ('open', TextBox('Battery', 'level %s%%\nstatus %s\nvoltage %.2f V\ntemp %s' % (battery()[0], battery()[1], int(battery()[2] or 0) / 1e6, rd('/sys/class/power_supply/battery/temp', '?'))))),
@@ -2388,7 +2421,7 @@ def main():
     def cur(): return stack[-1] if (not S['locked'] or isinstance(stack[-1], NightClock)) else S['lock']
     def to_nightstand():
         lock(); screen(True); stack.append(NightClock()); S['last'] = time.time()       # NightClock sets its own dim backlight, so it must come after screen(True)
-    last_ns = 0
+    last_ns = 0; off_since = None
     screen(True)
     if STATE['slider_closed'] and CFG['slider_lock'] and CFG['setup_done']: lock(); screen(False)
     threading.Thread(target=check_updates_bg, daemon=True).start()
@@ -2403,7 +2436,7 @@ def main():
             if not isinstance(stack[-1], (Calling, IncomingCall)): screen(True); S['locked'] = False; S['last'] = now; stack.append(IncomingCall(c)); dirty = True
         if isinstance(stack[-1], (Calling, IncomingCall)) and stack[-1].finished and now >= stack[-1].finished_at: stack.pop(); dirty = True
         if isinstance(stack[-1], IncomingCall) and stack[-1].call['id'] in ENDED: ENDED.discard(stack[-1].call['id']); stack.pop(); dirty = True
-        if now - last_batt > 5:
+        if now - last_batt > (5 if S['on'] else 30):
             last_batt = now; BATT.update(); BATT.charge_led(BATT.charging and not S['on'])
             S['unseen'] = len(unseen_notifs())
             for ev, p in BATT.pop_events():
@@ -2416,6 +2449,23 @@ def main():
         if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock, XView)):
             if ns_wanted() and not (ns_mode() == 1 and NS_DISMISSED[0]): to_nightstand(); dirty = True; continue
             lock(); screen(False)
+        if PWR:                                                       # power saver: stages after the screen goes off
+            try:
+                if not S['on']:
+                    if off_since is None: off_since = now
+                    PWR.screen_off_tick(now - off_since, CFG.get('ps_mode', 0), bool(BATT and BATT.online))
+                    if CFG.get('ps_mode', 0) >= 3 and now - off_since > 90 and PWR.enabled() and not INCOMING and not isinstance(stack[-1], (Calling, IncomingCall, Ringing)):
+                        busy = bool(AptJob.cur and not AptJob.cur.done) or bool(sh('pgrep -x mpg123; pgrep -x ffmpeg; pgrep -x aplay'))
+                        if PWR.can_suspend(bool(BATT and BATT.online), bool(jgmsim and jgmsim.modem_up()), CFG.get('ps_suspend_modem', False), busy):
+                            nxt = None
+                            a_ = CFG.get('alarm', {})
+                            if a_.get('on'):
+                                t_ = datetime.datetime.now().replace(hour=a_['h'], minute=a_['m'], second=0, microsecond=0)
+                                if t_ <= datetime.datetime.now(): t_ += datetime.timedelta(days=1)
+                                nxt = (t_ - datetime.datetime.now()).total_seconds() - 5
+                            PWR.suspend_once(nxt); last_batt = 0; continue
+                elif off_since is not None: off_since = None; PWR.screen_on()
+            except Exception: traceback.print_exc()
         if now - last_ns > 5:                                   # timed mode: show the clock when the window opens, even if the screen is already off
             last_ns = now
             if ns_mode() == 1:
@@ -2429,7 +2479,7 @@ def main():
         if S['on'] and (dirty or (app.tick and now - last_tick > app.tick)) and now - scr.last >= 0.12:
             if isinstance(stack[0], Grid) and stack[0].home: stack[0].ids = home_ids()
             scr.show(render(app)); dirty = False; last_tick = now
-        for k in keys.poll(0.12):
+        for k in keys.poll(0.12 if S['on'] else (0.5 if not PWR or PWR.stage < 1 else 1.5)):
             if k in ('SLIDE_CLOSE', 'SLIDE_OPEN'):
                 if not CFG.get('slider_enabled', True): continue
                 STATE['slider_closed'] = (k == 'SLIDE_CLOSE'); dirty = True

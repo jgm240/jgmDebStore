@@ -1,1 +1,3 @@
 X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data.
+
+1.5.1: Power saver (Settings > Power saver): modes Off/Light/Standard/Deep. After the screen is off: CPU to lowest speeds, extra cores offline, deep CPU idle allowed; WiFi off after 1 min; Deep suspends with an RTC wake-up timer. Skipped on charger, during calls/ssh/adb. Disabled by default until tested on the phone. Kill switch: /data/jgm/no-powersave. Log: /data/jgm/power.log.

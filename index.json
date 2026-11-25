@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated": "2026-11-23",
+ "updated": "2026-11-25",
  "apps": [
   {
    "id": "jwlink",
@@ -15,10 +15,10 @@
   }
  ],
  "system": {
-  "version": "1.5.0",
-  "file": "packages/jgmdeb-system-1.5.0.tar.gz",
-  "sha256": "a8589cb2490f9eb6223101412c699a052b0a6040bc3706259cc4a12b97677ca1",
-  "size": 156543,
-  "notes": "X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data."
+  "version": "1.5.1",
+  "file": "packages/jgmdeb-system-1.5.1.tar.gz",
+  "sha256": "9a2d23dc6e022643bbf4dbe8dfd3d2d3d3003c4db750f11a6fed23e1579c9b20",
+  "size": 160172,
+  "notes": "X server support (Xvfb viewer with keypad pointer/keyboard), Applications launcher for graphical apps, Software store with a 1690-app catalog (Debian AppStream data), apt on /data.\n\n1.5.1: Power saver (Settings > Power saver): modes Off/Light/Standard/Deep. After the screen is off: CPU to lowest speeds, extra cores offline, deep CPU idle allowed; WiFi off after 1 min; Deep suspends with an RTC wake-up timer. Skipped on charger, during calls/ssh/adb. Disabled by default until tested on the phone. Kill switch: /data/jgm/no-powersave. Log: /data/jgm/power.log."
  }
 }
