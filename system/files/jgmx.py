@@ -31,9 +31,16 @@ class XServer:
                          stdout=open('/var/log/xvfb.log', 'w'), stderr=subprocess.STDOUT)
         end = time.time() + wait
         while time.time() < end and not os.path.exists(FBDIR + '/Xvfb_screen0'): time.sleep(0.2)
-        time.sleep(0.5)
-        subprocess.Popen(['matchbox-window-manager', '-use_titlebar', 'no', '-use_cursor', 'no'], env=ENV, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(40):                                   # the framebuffer file exists before the server accepts clients
+            if sh('DISPLAY=%s xset q >/dev/null 2>&1 && echo ok' % DISPLAY, 5) == 'ok': break
+            time.sleep(0.25)
+        for _ in range(4):                                    # the window manager sometimes exits if it races the server start: retry
+            time.sleep(1.0)
+            subprocess.Popen(['matchbox-window-manager', '-use_titlebar', 'no', '-use_cursor', 'no'], env=ENV, start_new_session=True, stdout=open('/var/log/xwm.log', 'w'), stderr=subprocess.STDOUT)
+            time.sleep(1.5)
+            if sh('pgrep -x matchbox-window'): break
         sh('DISPLAY=%s xsetroot -solid "#1b2630"' % DISPLAY)
+        sh('echo "XTerm*faceName: DejaVu Sans Mono\nXTerm*faceSize: 13\nXTerm*scrollBar: false\nXTerm*saveLines: 500" | DISPLAY=%s xrdb -merge 2>/dev/null' % DISPLAY)
         return self.running()
     def stop(self):
         self._close(); sh('pkill -x matchbox-window-manager; pkill -x Xvfb'); sh('rm -rf %s' % FBDIR)

@@ -9,3 +9,5 @@ APT::Install-Recommends "false";
 Dir::Cache::pkgcache "";
 Dir::Cache::srcpkgcache "";
 CONF
+# big package files go to the SD card after every install (see sd-offload.py)
+echo 'DPkg::Post-Invoke { "[ -x /opt/jgm/sd-offload.py ] && python3 /opt/jgm/sd-offload.py --new >/dev/null 2>&1 || true"; };' > /etc/apt/apt.conf.d/99jgm-offload
