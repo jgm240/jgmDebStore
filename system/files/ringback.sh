@@ -1,6 +1,7 @@
 #!/bin/sh
 # jgmDeb: local ringback tone while the far end is ringing (own work). usage: ringback.sh start|stop
 # 425 Hz, 1 s on / 5 s off (the European pattern), played through the same earpiece/speaker path as the call.
+# Only used when the network does not send its own ringback (QMI alerting type "local"), like Android.
 W=/opt/jgm/ringback.wav
 case "$1" in
   start)
@@ -14,8 +15,6 @@ PY
     amixer -q -c 0 cset name="PRI_MI2S_RX Audio Mixer MultiMedia1" 1
     (nohup sh -c "while :; do aplay -q -D hw:0,0 $W; done" >/dev/null 2>&1 &) ;;
   stop)
-    pkill -f "aplay -q -D hw:0,0 $W" 2>/dev/null
-    for p in $(pgrep -f "while :; do aplay -q -D hw:0,0"); do kill $p 2>/dev/null; done
-    pkill -f "aplay -q -D hw:0,0" 2>/dev/null
-    amixer -q -c 0 cset name="PRI_MI2S_RX Audio Mixer MultiMedia1" 0 ;;
+    pkill -f "do aplay -q -D hw:0,0 $W" 2>/dev/null          # the loop first, or it starts the next round
+    pkill -f "aplay -q -D hw:0,0 $W" 2>/dev/null ;;
 esac

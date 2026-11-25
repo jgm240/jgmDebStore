@@ -1,10 +1,10 @@
 """jgmDeb: SIM card access through the modem's QMI UIM service (own work). Needs the modem running (Settings > Modem / audio).
 card_status(), iccid(), imsi(), read_adn() (contacts stored on the SIM), verify_pin(). Also operator and signal via NAS."""
-import struct, time, os
+import struct, time, os, threading
 import jgmqmi as Q
 
 UIM, NAS, DMS = 0x0B, 0x03, 0x02
-_c = {}; _irsc = False
+_c = {}; _irsc = False; _setup_lock = threading.Lock()
 def irsc():
     """the kernel's IPC router holds back every send until user space has given it security rules (Android's irsc_util does this at boot)"""
     global _irsc
@@ -19,12 +19,26 @@ def modem_up():
     except Exception: return False
 def svc(n):
     irsc()
-    if n not in _c:
+    c = _c.get(n)
+    if c is None or c.sock is None:
         a = Q.servers().get(n)
         if not a: raise RuntimeError('modem service 0x%x not available (is the modem running?)' % n)
-        _c[n] = Q.QMI(n, 6.0, a)
-    return _c[n]
-def reset(): _c.clear()
+        c = _c[n] = Q.QMI(n, 6.0, a)
+    return c
+def reset(n=None):
+    """drop cached clients (all, or one service) so the next svc() reconnects; needed after the modem restarts (its services get new ports)"""
+    for k in ([n] if n is not None else list(_c)):
+        c = _c.pop(k, None)
+        if c:
+            try: c.close()
+            except Exception: pass
+def refresh():
+    """reconnect clients whose service moved (modem restarted) -> True if anything was dropped"""
+    try: cur = Q.servers()
+    except Exception: return False
+    gone = [k for k, c in list(_c.items()) if cur.get(k) != (c.node, c.port)]
+    for k in gone: reset(k)
+    return bool(gone)
 
 def card_status():
     """-> {'slots': [{'slot': 1.., 'state', 'error', 'apps': [{'type','aid','state','pin1_state','pin1_retries','puk1_retries'}]}], 'slot': the slot with a usable card or None, ...}"""
@@ -40,7 +54,16 @@ def card_status():
         slots.append({'slot': n + 1, 'state': {0: 'absent', 1: 'present', 2: 'error'}.get(cs, 'unknown'), 'error': err, 'apps': apps})
     usable = next((s_ for s_ in slots if s_['state'] == 'present' and any(a['type'] in ('USIM', 'SIM') for a in s_['apps'])), None)
     return {'slots': slots, 'slot': usable['slot'] if usable else None, 'usable': usable, 'raw': b.hex()}
+def registered():
+    try: return svc(NAS).call(0x24).get(1, b'')[:1] == b'\x01'
+    except Exception: return False
+def ensure_ready(wait=25):
+    """cheap check before a call: if the modem is already registered nothing is touched (no re-provisioning, no mode change); otherwise full setup()"""
+    if registered(): return {'ok': True, 'registered': True}
+    return setup(wait)
 def setup(wait=40):
+    with _setup_lock: return _setup(wait)
+def _setup(wait):
     """find the slot with a card, activate its (U)SIM app as the primary session, wait for network registration. -> status dict"""
     st = card_status(); u = st['usable']
     if not u: return {'ok': False, 'why': 'no SIM card found'}
@@ -50,7 +73,7 @@ def setup(wait=40):
     end = time.time() + wait; reg = False
     try: svc(DMS).call(0x2e, {0x01: bytes([0])})                       # online
     except Exception: pass
-    try: apply_mode()
+    try: apply_mode(force=False)                                       # only if the modem's setting differs (a change makes it search the network again)
     except Exception: pass
     while time.time() < end:
         try: reg = svc(NAS).call(0x24).get(1, b'')[:1] == b'\x01'
@@ -136,10 +159,18 @@ RAT_NAMES = {1: 'CDMA', 2: 'EVDO', 4: '2G (GSM)', 5: '3G (UMTS)', 8: '4G (LTE)',
 def get_mode():
     try: return max(0, min(len(NET_MODES) - 1, int(open(MODE_FILE).read().strip())))
     except Exception: return 2                       # default: 2G + 3G (plain circuit-switched voice; VoLTE needs an IMS data bearer that is not set up yet)
-def apply_mode(idx=None):
-    """tell the modem which technologies it may use (until the next power cycle; setup() re-applies the saved choice on every start)"""
+def mode_bits():
+    """the modem's current mode preference bits (NAS Get System Selection Preference, TLV 0x11) or None"""
+    v = svc(NAS).call(0x34).get(0x11, b'')
+    return struct.unpack('<H', v[:2])[0] if len(v) >= 2 else None
+def apply_mode(idx=None, force=True):
+    """tell the modem which technologies it may use (setup() re-applies the saved choice on every start, but only when it differs)"""
     if idx is not None: open(MODE_FILE, 'w').write(str(idx))
     bits = NET_MODES[get_mode()][1]
+    if not force:
+        try:
+            if mode_bits() == bits: return (0, 0)
+        except Exception: pass
     return svc(NAS).call(0x33, {0x11: struct.pack('<H', bits), 0x17: bytes([1])})['result']
 def status():
     """{'registered': bool, 'rat': 'name', 'dbm': int or None}"""

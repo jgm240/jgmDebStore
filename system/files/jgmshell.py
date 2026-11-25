@@ -364,7 +364,10 @@ class Phone(App):
             if self.num: self.num = self.num[:-1]
             else: return 'back'
         elif k == 'END': return 'back'
-        elif k in ('CALL', 'OK'): return ('open', Calling(self.num)) if self.num else None
+        elif k in ('CALL', 'OK'):
+            if self.num: return ('open', Calling(self.num))
+            last = [c['n'] for c in jload('calls.json', []) if c.get('dir') == 'out' and c.get('n')]
+            if last: self.num = last[-1]; self.msg = 'Last number. CALL again to dial.'
 try: import jgmvoice, jgmsim
 except Exception: jgmvoice = jgmsim = None
 try:
@@ -376,87 +379,161 @@ def contact_name(num):
     for c in jload('contacts.json', []):
         if n and re.sub(r'[^0-9+]', '', c['number'])[-8:] == n[-8:]: return c['name']
     return ''
+def log_call(num, direction, **extra):
+    """append to the call log (calls.json, newest last, 100 kept). direction 'out' | 'in'; extra: missed / declined / seen"""
+    e = {'n': num or '', 't': time.time(), 'dir': direction}; e.update(extra)
+    if direction == 'in' and 'seen' not in e: e['seen'] = True
+    jsave('calls.json', (jload('calls.json', []) + [e])[-100:])
+def missed_unseen(): return [c for c in jload('calls.json', []) if c.get('dir') == 'in' and c.get('seen') is False]
+RING = {'on': False}
+def ring(on):
+    """incoming-call ringtone / vibration as set in Settings > Ringtone"""
+    if not jgmvoice or RING['on'] == on: return
+    RING['on'] = on
+    m = CFG.get('ring', 'ring')
+    if on and m == 'silent': return
+    jgmvoice.ringtone(on, vibrate=True, sound=(m == 'ring'))
+RING_MODES = [('ring', 'Ring + vibrate'), ('vibrate', 'Vibrate only'), ('silent', 'Silent')]
+def ring_mode_name(): return dict(RING_MODES).get(CFG.get('ring', 'ring'), 'Ring + vibrate')
+def ring_mode_next():
+    ids = [m for m, _ in RING_MODES]; CFG['ring'] = ids[(ids.index(CFG.get('ring', 'ring')) + 1) % len(ids)] if CFG.get('ring', 'ring') in ids else 'ring'; save_cfg()
+
 class Calling(App):
-    """A voice call: outgoing (dials through the modem) or an answered incoming call (cid given). END hangs up, OK toggles speaker, digits send DTMF."""
+    """A voice call: outgoing (dials through the modem) or an incoming one being answered (cid + answer=True).
+    END hangs up (twice = close the screen at once), OK toggles the speaker, UP/DOWN volume, digits send DTMF tones."""
     title = 'Call'; right = 'End'; tick = 1
-    def __init__(self, num, cid=None):
-        self.num = num; self.cid = cid; self.t0 = None; self.state = 'Dialing...' if cid is None else 'Connecting...'; self.err = ''; self.speaker = False; self.finished = False; self.finished_at = 0; self.audio = False; self.rb = False
-        if cid is None: jsave('calls.json', (jload('calls.json', []) + [{'n': num, 't': time.time(), 'dir': 'out'}])[-50:])
+    def __init__(self, num, cid=None, answer=False):
+        self.num = num; self.cid = cid; self.answering = answer; self.t0 = None; self.state = 'Dialing...' if cid is None else 'Connecting...'; self.err = ''
+        self.speaker = False; self.finished = False; self.finished_at = 0; self.audio = False; self.rb = False; self.rb_since = None; self.ending = False; self.presses = 0
+        self.vol = int(CFG.get('call_volume', 3)); self.vol_t = 0; self.dtmf = ''
+        if cid is None: log_call(num, 'out')
         threading.Thread(target=self.run, daemon=True).start()
-    def finish(self, text):
-        self.state = text; self.finished = True; self.finished_at = time.time() + 2
+    def finish(self, text, delay=2.0):
+        if self.finished: return
+        self.state = text; self.finished = True; self.finished_at = time.time() + delay
         if self.rb: jgmvoice.ringback(False); self.rb = False
         if self.audio: jgmvoice.audio('off'); self.audio = False
+    def start_audio(self):
+        if not self.audio and not self.finished: jgmvoice.volume(self.vol); jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
     def run(self):
         try:
             if jgmvoice is None: self.err = 'Voice support missing'; return self.finish('Failed')
             if not jgmsim.modem_up(): self.err = 'The modem is off. Settings > Modem / audio > Start modem.'; return self.finish('No modem')
             if self.cid is None:
-                st = jgmsim.setup(25)
+                st = jgmsim.ensure_ready(25)
                 if not st['ok']: self.err = st['why']; return self.finish('No SIM')
                 if not st.get('registered'): self.err = 'No network yet'; return self.finish('No network')
-                jgmvoice.register(); self.cid = jgmvoice.dial(self.num); jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True       # voice path up from the start, so ringback is heard
-            seen = False; started = time.time()
-            while not self.finished:
-                time.sleep(1); cs = {c['id']: c for c in jgmvoice.calls()}; c = cs.get(self.cid)
-                if not c:
-                    if seen or time.time() - started > 8:
-                        why = jgmvoice.end_reason_text(self.cid); jgmvoice.debug('call %s ended: %s (seen=%s)' % (self.cid, why or 'no reason', seen)); self.err = ('Reason: ' + why) if why else ''; return self.finish(why or 'Call ended')
-                    continue
-                seen = True; name = c['state_name']
-                if c['state'] != getattr(self, 'last_state', None): jgmvoice.debug('call %d state %d (%s) dir %s' % (self.cid, c['state'], name, c['dir'])); self.last_state = c['state']
-                if c['state'] == 5 and not self.rb: jgmvoice.ringback(True); self.rb = True           # far end is ringing: play the local ringback tone
-                if c['state'] != 5 and self.rb: jgmvoice.ringback(False); self.rb = False
-                if c['state'] == 3 and self.t0 is None:
-                    self.t0 = time.time(); self.state = 'Connected'
-                    if not self.audio: jgmvoice.audio('speaker' if self.speaker else 'handset'); self.audio = True
-                elif c['state'] != 3: self.state = {1: 'Dialing...', 5: 'Ringing...', 10: 'Dialing...', 8: 'Ending...'}.get(c['state'], name)
-        except Exception as e: self.err = str(e)[:60]; jgmvoice.debug('call exception: ' + repr(e)); self.finish('Call failed')
+                if self.ending: return self.finish('Cancelled', 0)
+                jgmvoice.register(); self.cid = jgmvoice.dial(self.num)
+                if self.ending: jgmvoice.hangup(self.cid); return self.finish('Cancelled', 0.5)
+                self.start_audio()            # voice path up from the start: the network's own ringback / announcements are heard
+            elif self.answering:
+                try: jgmvoice.answer(self.cid)
+                except Exception as e:
+                    self.err = str(e)[:60]; jgmvoice.debug('answer failed: %r' % e); jgmvoice.hangup(self.cid); return self.finish('Could not answer')
+        except Exception as e:
+            self.err = str(e)[:60]; jgmvoice.debug('call setup exception: %r' % e); return self.finish('Call failed')
+        seen = False; started = time.time(); fails = 0
+        while not self.finished:
+            time.sleep(1)
+            try: cs = {c['id']: c for c in jgmvoice.calls()}; fails = 0
+            except Exception as e:                     # a modem hiccup must not end the call screen (and its audio) while the call goes on
+                fails += 1; jgmvoice.debug('call poll failed (%d): %r' % (fails, e))
+                if fails >= 30: self.err = 'Lost contact with the modem'; return self.finish('Call lost')
+                continue
+            c = cs.get(self.cid)
+            if not c:
+                if seen or self.ending or time.time() - started > 8:
+                    why = jgmvoice.end_reason(self.cid, 0.5 if self.ending else 1.5)
+                    jgmvoice.debug('call %s ended: %s (seen=%s)' % (self.cid, why or 'no reason', seen))
+                    self.err = ('Reason: ' + why) if why and not self.ending else ''
+                    return self.finish(why or 'Call ended', 1.0 if self.ending else 2.5)
+                continue
+            seen = True; name = c['state_name']; now = time.time()
+            if c['state'] != getattr(self, 'last_state', None): jgmvoice.debug('call %d state %d (%s) dir %s alert %s' % (self.cid, c['state'], name, c['dir'], c.get('alert'))); self.last_state = c['state']
+            # local ringback only when the network does not play its own (alerting type 0 = local; 1 = remote/in-band, like Android).
+            # The type can arrive a moment after the ringing state, so wait 2 s before deciding on "unknown".
+            if c['state'] == 5 and self.rb_since is None: self.rb_since = now
+            want_rb = c['state'] == 5 and (c.get('alert') == 0 or (c.get('alert') is None and now - self.rb_since > 2))
+            if want_rb and not self.rb: jgmvoice.ringback(True); self.rb = True
+            elif not want_rb and self.rb: jgmvoice.ringback(False); self.rb = False
+            if c['state'] == 3 and self.t0 is None: self.t0 = now; self.state = 'Connected'; self.start_audio()
+            elif c['state'] != 3 and not self.ending: self.state = {1: 'Dialing...', 4: 'Connecting...', 5: 'Ringing...', 6: 'On hold', 10: 'Dialing...', 8: 'Ending...'}.get(c['state'], name)
+    def hang(self):
+        if self.cid is None: return                    # still dialing: run() hangs up as soon as the modem returns the call id
+        if not jgmvoice.hangup(self.cid): self.err = 'The modem did not end the call. Press End again (twice closes this screen).'; self.ending = False
     def draw(self, d, img):
-        nm = contact_name(self.num); ctext(d, W / 2, 56, nm or self.num, font(22, True), FG)
-        if nm: ctext(d, W / 2, 86, self.num, font(13), DIM)
-        txt = self.state if self.t0 is None else '%02d:%02d' % divmod(int(time.time() - self.t0), 60)
-        ctext(d, W / 2, 120, txt, font(26 if self.t0 else 16, True), ACC)
-        if self.t0: ctext(d, W / 2, 160, 'Speaker ' + ('on' if self.speaker else 'off') + '  (OK)', font(12), DIM)
-        for i, l in enumerate(wrap(d, self.err, font(12), W - 20)): ctext(d, W / 2, 190 + i * 15, l, font(12), WARN)
+        nm = contact_name(self.num); ctext(d, W / 2, 50, nm or self.num or 'Unknown', font(22, True), FG)
+        if nm: ctext(d, W / 2, 80, self.num, font(13), DIM)
+        txt = self.state if self.t0 is None or self.finished or self.ending else '%02d:%02d' % divmod(int(time.time() - self.t0), 60)
+        ctext(d, W / 2, 112, txt, font(26 if self.t0 and not self.finished and not self.ending else 16, True), ACC)
+        if self.audio and not self.finished: ctext(d, W / 2, 152, ('Speaker' if self.speaker else 'Earpiece') + '  (OK: switch)', font(12), DIM)
+        if time.time() - self.vol_t < 2.5: ctext(d, W / 2, 170, 'Volume ' + '|' * self.vol + '.' * (5 - self.vol), font(13, True), ACC)
+        elif self.dtmf: ctext(d, W / 2, 170, self.dtmf[-14:], font(16, True), FG)
+        for i, l in enumerate(wrap(d, self.err, font(12), W - 20)[:4]): ctext(d, W / 2, 192 + i * 15, l, font(12), WARN)
     def key(self, k):
         if k in ('RSK', 'END'):
-            if self.cid is not None and jgmvoice: threading.Thread(target=lambda: jgmvoice.hangup(self.cid), daemon=True).start()
+            if self.finished: return 'back'
+            self.presses += 1
             if self.rb: jgmvoice.ringback(False); self.rb = False
-            if self.audio: jgmvoice.audio('off')
-            return 'back'
-        if k == 'OK' and self.t0: self.speaker = not self.speaker; jgmvoice.audio('speaker' if self.speaker else 'handset')
-        elif len(k) == 1 and k in '0123456789*#' and self.t0 and self.cid is not None: threading.Thread(target=lambda: jgmvoice.send_dtmf(self.cid, k), daemon=True).start()
+            if self.presses >= 2:                      # second press: close the screen now (the hang-up keeps trying in the background)
+                threading.Thread(target=self.hang, daemon=True).start(); self.finish('Ending...', 0); return 'back'
+            self.ending = True; self.state = 'Ending...'
+            if self.cid is None: self.finish('Cancelled', 0); return 'back'
+            threading.Thread(target=self.hang, daemon=True).start(); return None
+        if k == 'OK' and self.audio and not self.finished: self.speaker = not self.speaker; jgmvoice.audio('speaker' if self.speaker else 'handset')
+        elif k in ('UP', 'DOWN') and not self.finished:
+            self.vol = max(0, min(5, self.vol + (1 if k == 'UP' else -1))); self.vol_t = time.time(); CFG['call_volume'] = self.vol; save_cfg(); jgmvoice.volume(self.vol)
+        elif len(k) == 1 and k in '0123456789*#' and self.t0 and self.cid is not None and not self.finished:
+            self.dtmf += k; cid = self.cid; threading.Thread(target=lambda: jgmvoice.send_dtmf(cid, k), daemon=True).start()
 class IncomingCall(App):
     title = 'Incoming call'; left = 'Answer'; right = 'Decline'; tick = 1
-    def __init__(self, call): self.call = call; self.finished = False; self.finished_at = 0; self.t = time.time()
+    def __init__(self, call):
+        self.call = call; self.finished = False; self.finished_at = 0; self.t = time.time(); self.quiet = False; ring(True)
     def draw(self, d, img):
         nm = contact_name(self.call['number']); ctext(d, W / 2, 56, nm or self.call['number'] or 'Unknown', font(22, True), FG)
         if nm: ctext(d, W / 2, 86, self.call['number'], font(13), DIM)
         ctext(d, W / 2, 130, 'Incoming call', font(16), ACC if int(time.time() * 2) % 2 else FG)
         ctext(d, W / 2, 170, 'CALL / slide open = answer', font(11), DIM); ctext(d, W / 2, 188, 'END = decline', font(11), DIM)
+        ctext(d, W / 2, 206, 'Ringer off' if self.quiet else 'UP / DOWN = silence', font(11), DIM)
     def answer(self):
-        CALL_ANSWERED.add(self.call['id'])
-        try: jgmvoice.answer(self.call['id'])
-        except Exception: pass
-        return ('replace', Calling(self.call['number'], self.call['id']))
+        ring(False); CALL_ANSWERED.add(self.call['id']); log_call(self.call['number'], 'in')
+        return ('replace', Calling(self.call['number'], self.call['id'], answer=True))
     def key(self, k):
         if k in ('LSK', 'CALL', 'OK'): return self.answer()
         if k in ('RSK', 'END'):
-            threading.Thread(target=lambda: jgmvoice.hangup(self.call['id']), daemon=True).start(); CALL_ANSWERED.add(-self.call['id']); return 'back'
-INCOMING = []; ENDED = set()
-def on_incoming_call(c): INCOMING.append(c)
+            ring(False); cid = self.call['id']; CALL_ANSWERED.add(-cid); log_call(self.call['number'], 'in', declined=True)
+            threading.Thread(target=lambda: jgmvoice.hangup(cid), daemon=True).start(); return 'back'
+        if k in ('UP', 'DOWN', '#') and not self.quiet: self.quiet = True; ring(False)
+INCOMING = []; ENDED = set(); WAIT_NOTIFIED = set()
+def on_incoming_call(c):
+    ENDED.discard(c['id']); WAIT_NOTIFIED.discard(c['id'])           # call ids are reused: forget the last call that had this id
+    INCOMING.append(c)
 def on_call_end(c):
     ENDED.add(c['id'])
     if c['dir'] == 'in' and c['id'] not in CALL_ANSWERED and -c['id'] not in CALL_ANSWERED and c['state'] != 3:
-        jsave('calls.json', (jload('calls.json', []) + [{'n': c['number'], 't': time.time(), 'dir': 'in', 'seen': False}])[-50:]); notify('Missed call', contact_name(c['number']) or c['number'])
+        log_call(c['number'], 'in', missed=True, seen=False); notify('Missed call', contact_name(c['number']) or c['number'] or 'Unknown')
     CALL_ANSWERED.discard(c['id']); CALL_ANSWERED.discard(-c['id'])
-class CallLog(App):
-    title = 'Call log'
-    def draw(self, d, img):
-        cl = jload('calls.json', [])[::-1]
-        for i, c in enumerate(cl[:11]): d.text((8, 30 + i * 22), fit(d, ('>' if c.get('dir') == 'out' else '<') + ' ' + c['n'], font(14), W - 16), font=font(14), fill=FG)
-        if not cl: d.text((10, 40), 'No calls yet', font=font(14), fill=DIM)
+def CallLog():
+    """the call log (newest first). OK / CALL calls back; opening it marks missed calls as seen"""
+    cl = jload('calls.json', [])
+    if any(c.get('seen') is False for c in cl):
+        for c in cl: c['seen'] = True if c.get('dir') == 'in' else c.get('seen')
+        jsave('calls.json', cl)
+    rev = lambda: jload('calls.json', [])[::-1]
+    def label(c):
+        kind = 'Outgoing' if c.get('dir') == 'out' else ('Missed' if c.get('missed') else ('Declined' if c.get('declined') else 'Incoming'))
+        return kind + '  ' + time.strftime('%d %b %H:%M', time.localtime(c.get('t', 0)))
+    def rows(): return [((contact_name(c['n']) or c['n'] or 'Unknown'), label(c)) for c in rev()]
+    def pick(i):
+        n = rev()[i]['n']
+        return ('open', Calling(n)) if n else None
+    def opts():
+        o = []
+        if rev(): o += [('Send message', lambda: ('popopen', Compose(rev()[pl.sel]['n']))), ('Copy to dialer', lambda: ('popopen', Phone(rev()[pl.sel]['n'])))]
+        o.append(('Clear call log', lambda: (jsave('calls.json', []), 'popback')[1]))
+        return o
+    pl = PickList('Call log', rows, pick, opts); return pl
 class Contacts(App):
     title = 'Contacts'; left = 'Options'; right = 'Back'
     def __init__(self, pick=None): self.sel = 0; self.pick = pick; self.cs = []; self.load()
@@ -912,7 +989,7 @@ def modem_menu():
     def start(): subprocess.Popen('sh /opt/jgm/modem-up.sh', shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return ListMenu('Modem / audio', [('Status', lambda: 'Running' if audio_ok() else 'Off', lambda: None), ('Start modem', None, lambda: (start(), None)[1]),
                                       ('Start at boot', lambda: 'On' if auto() else 'Off', tog),
-                                      ('Info', None, lambda: ('open', TextBox('Modem', 'The modem DSP provides audio.\nIt needs a file service (rmtfs) that this phone software runs for it.\nCalls, SMS and SIM are not wired up yet.\n\nIf the phone ever fails to boot with Start at boot on, it turns itself off for the next boot.')))])
+                                      ('Info', None, lambda: ('open', TextBox('Modem', 'The modem handles calls and the SIM, and its DSP provides audio.\nIt needs a file service (rmtfs) that this phone software runs for it.\nCalls and SIM contacts work; SMS and mobile data are not wired up yet.\nGive it a minute after starting before the first call.\n\nIf the phone ever fails to boot with Start at boot on, it turns itself off for the next boot.')))])
 
 
 def adb_menu():
@@ -997,6 +1074,7 @@ class Settings(ListMenu):
                  ('Date & time', None, lambda: ('open', DateTimeSet())), ('Lock & security', None, lambda: ('open', lock_menu())),
                  ('Slider', lambda: ('' if not CFG['slider_enabled'] else ('Closed' if STATE['slider_closed'] else 'Open')), lambda: ('open', slider_menu())),
                  ('WiFi', None, lambda: ('open', WifiApp())),
+                 ('Ringtone', ring_mode_name, ring_mode_next),
                  ('Mobile network', lambda: jgmsim.NET_MODES[jgmsim.get_mode()][0] if jgmsim else 'n/a', lambda: ('open', mobile_menu())),
                  ('Modem / audio', lambda: 'Running' if audio_ok() else 'Off', lambda: ('open', modem_menu())),
                  ('Bluetooth', lambda: 'BLE' if bt_available() else 'n/a', lambda: ('open', BluetoothApp())),
@@ -1097,7 +1175,7 @@ class LockScreen(App):
         ctext(d, W / 2, 140, n.strftime('%A'), font(16), FG); ctext(d, W / 2, 164, n.strftime('%d %B'), font(14), DIM)
         cap, st, _ = battery(); ctext(d, W / 2, 210, 'Battery %s%%%s' % (cap, ' (charging)' if st.lower().startswith('charg') else ''), font(12), DIM)
         if STATE['slider_closed'] and CFG.get('slider_enabled', True): ctext(d, W / 2, 232, 'Slider closed', font(12), WARN)
-        miss = len([c for c in jload('calls.json', []) if c.get('dir') == 'in' and not c.get('seen')])
+        miss = len(missed_unseen())
         if miss: ctext(d, W / 2, 252, '%d missed call%s' % (miss, '' if miss == 1 else 's'), font(12), WARN)
         for i, n in enumerate(unseen_notifs()[-3:][::-1]): ctext(d, W / 2, 262 + i * 16 - (16 if not miss else 0), fit(d, n['title'], font(11), W - 20), font(11), ACC)
         if time.time() - self.hint < 3: ctext(d, W / 2, 276 - 4, 'Now press  *', font(16, True), FG)
@@ -2439,7 +2517,9 @@ def main():
     S = {'on': True, 'locked': False, 'lock': None, 'last': time.time()}
     def screen(on):
         S['on'] = on; wr(LCD, CFG['brightness'] if on else 0); wr(KBL, 12 if on else 0)
+    def in_call(): return any(isinstance(a, (Calling, IncomingCall)) for a in stack)
     def lock():
+        if in_call(): S['relock'] = True; return           # never lock over a call: END must hang up, CALL must answer; lock when it is over
         if CFG['autolock'] and CFG['setup_done']: S['locked'] = True; S['lock'] = LockScreen()
     def cur(): return stack[-1] if (not S['locked'] or isinstance(stack[-1], NightClock)) else S['lock']
     def to_nightstand():
@@ -2454,11 +2534,17 @@ def main():
     while True:
         now = time.time()
         if S.get('unseen') and not S['on']: wr('/sys/class/leds/red/brightness', 60 if int(now * 1.5) % 3 == 0 else 0)
-        while INCOMING:
-            c = INCOMING.pop(0)
-            if not isinstance(stack[-1], (Calling, IncomingCall)): screen(True); S['locked'] = False; S['last'] = now; stack.append(IncomingCall(c)); dirty = True
-        if isinstance(stack[-1], (Calling, IncomingCall)) and stack[-1].finished and now >= stack[-1].finished_at: stack.pop(); dirty = True
-        if isinstance(stack[-1], IncomingCall) and stack[-1].call['id'] in ENDED: ENDED.discard(stack[-1].call['id']); stack.pop(); dirty = True
+        for c in list(INCOMING):                      # a call that arrives during another one waits here until that one is over
+            if c['id'] in ENDED: INCOMING.remove(c); continue
+            if not in_call():
+                INCOMING.remove(c); S['relock'] = S.get('relock') or S['locked']; S['locked'] = False
+                screen(True); S['last'] = now; stack.append(IncomingCall(c)); dirty = True
+            elif c['id'] not in WAIT_NOTIFIED: WAIT_NOTIFIED.add(c['id']); notify('Call waiting', contact_name(c['number']) or c['number'] or 'Unknown')
+        for a in [a for a in stack if isinstance(a, (Calling, IncomingCall)) and ((a.finished and now >= a.finished_at) or (isinstance(a, IncomingCall) and a.call['id'] in ENDED))]:
+            if isinstance(a, IncomingCall): ENDED.discard(a.call['id'])
+            if len(stack) > 1: stack.remove(a); dirty = True
+        if RING['on'] and not any(isinstance(a, IncomingCall) for a in stack): ring(False)      # the caller gave up, the screen was replaced, ...
+        if S.get('relock') and not in_call(): S['relock'] = False; lock(); dirty = True
         if now - last_batt > (5 if S['on'] else 30):
             last_batt = now; BATT.update(); BATT.charge_led(BATT.charging and not S['on'])
             S['unseen'] = len(unseen_notifs())
@@ -2470,11 +2556,13 @@ def main():
             if isinstance(stack[-1], (BatteryApp, Monitor, Grid)) or S['locked']: dirty = True
         app = cur()
         if S['on'] and CFG['timeout'] and now - S['last'] > CFG['timeout'] and not isinstance(app, (Terminal, Ringing, NightClock, XView)):
-            if ns_wanted() and not (ns_mode() == 1 and NS_DISMISSED[0]): to_nightstand(); dirty = True; continue
-            lock(); screen(False)
+            if in_call():                                   # during a call only the screen goes off (no lock, no night clock); never while it rings
+                if not any(isinstance(a, IncomingCall) for a in stack): screen(False)
+            elif ns_wanted() and not (ns_mode() == 1 and NS_DISMISSED[0]): to_nightstand(); dirty = True; continue
+            else: lock(); screen(False)
         if PWR:                                                       # power saver: stages after the screen goes off
             try:
-                if not S['on']:
+                if not S['on'] and not in_call():         # no power saving stages during a call
                     if off_since is None: off_since = now
                     PWR.screen_off_tick(now - off_since, CFG.get('ps_mode', 0), bool(BATT and BATT.online))
                     if CFG.get('ps_mode', 0) >= 3 and now - off_since > 90 and PWR.enabled() and not INCOMING and not isinstance(stack[-1], (Calling, IncomingCall, Ringing)):
@@ -2493,7 +2581,7 @@ def main():
             last_ns = now
             if ns_mode() == 1:
                 if not ns_in_window(): NS_DISMISSED[0] = False
-                elif ns_wanted() and not NS_DISMISSED[0] and not isinstance(stack[-1], (NightClock, Calling, IncomingCall, Ringing)) and (not S['on'] or now - S['last'] > (CFG['timeout'] or 30)): to_nightstand(); dirty = True
+                elif ns_wanted() and not NS_DISMISSED[0] and not in_call() and not isinstance(stack[-1], (NightClock, Ringing)) and (not S['on'] or now - S['last'] > (CFG['timeout'] or 30)): to_nightstand(); dirty = True
         if CFG['alarm']['on'] and now - last_alarm > 5:
             last_alarm = now; n = datetime.datetime.now(); a = CFG['alarm']; day = n.strftime('%Y-%m-%d')
             if n.hour == a['h'] and n.minute == a['m'] and a.get('fired') != day:
@@ -2517,7 +2605,9 @@ def main():
                 screen(True); S['locked'] = False; S['last'] = time.time()
                 if not isinstance(stack[-1], Popup) or stack[-1].title != 'Power': stack.append(power_menu())
                 dirty = True; continue
-            if not S['on']: screen(True); S['last'] = time.time(); dirty = True; continue          # first key only wakes the screen
+            if not S['on']:                                                                          # first key only wakes the screen ...
+                screen(True); S['last'] = time.time(); dirty = True
+                if not (k in ('END', 'CALL') and isinstance(stack[-1], (Calling, IncomingCall))): continue   # ... except END / CALL in a call
             S['last'] = time.time(); app = cur()
             if S['locked'] and k == 'END' and not isinstance(app, NightClock): screen(False); continue
             if S['locked'] and not isinstance(app, NightClock):

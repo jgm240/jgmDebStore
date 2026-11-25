@@ -9,3 +9,18 @@ X server support (Xvfb viewer with keypad pointer/keyboard), Applications launch
 1.5.4: Call audio: if the modem's voice services are not up yet (call placed soon after the modem started) the voice path is retried until it registers, so the call gets sound.
 
 1.5.5: Calls: the incoming-call watcher no longer hogs the modem connection, so the call screen updates at once (was stuck on "Dialing...") and End hangs up promptly.
+
+1.6.0: Calls overhaul (bug hunt through the whole call code):
+- Incoming calls vanished instantly after the first call (a stale "ended" call id is reused by the next call). Fixed.
+- The screen locked during calls, so END could not hang up and a ringing call could not be answered; the night clock could also cover a call. During a call the screen now only turns off; END/CALL work with the screen off; the phone re-locks after the call if it was locked (no PIN bypass).
+- Incoming calls rang silently: new ringtone (synthesised) + vibration; Settings > Ringtone: ring / vibrate / silent; UP/DOWN silences.
+- Call audio: the voice session was held open with aplay/arecord, which quit after ALSA's ~10 s timeout and closed the voice session -> calls answered after ~10 s of ringing had no audio. New voicepcm.py holds the device open like Android (no data, no timeout).
+- DTMF used a wrong QMI message (0x25 = an indication id) and a CDMA-only mechanism: now start/stop continuous DTMF (0x29/0x2A).
+- Local ringback only when the network does not send its own (alerting type), so network announcements are heard.
+- END no longer hides a call that is still going: the screen stays until the modem confirms; a second END closes it.
+- Dialling no longer re-provisions the SIM and re-applies the network mode every time (could restart the network search); mode only changes when it differs.
+- A transient modem error no longer ends the call screen and its audio; reconnects after a modem restart.
+- QMI client: thread-safe waiting counter, indications already received are delivered at once.
+- call-audio.sh: serialised (flock), newer requests win, calibration FIFO can no longer hang, in-call volume (UP/DOWN), per-call kernel log in /data/jgm/call-kernel.log.
+- Call log: names, times, missed/declined, call back with CALL, options; missed calls are marked seen when opened. Answered/declined calls are logged.
+- Call waiting: a second call waits (notification) and is shown when the first call ends. Dialler: CALL on an empty number brings back the last one.
