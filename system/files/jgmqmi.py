@@ -30,7 +30,7 @@ def _addr_id(node, port):                    # struct sockaddr_msm_ipc: family u
 class QMI:
     def __init__(self, service, timeout=5.0, addr=None):
         """addr=(node, port) skips the router lookup ioctl, which can block in the kernel while the modem is up: use servers() to find it"""
-        self.service = service; self.txn = 0; self.timeout = timeout; self.lock = threading.Lock(); self.sock = None; self.ind = []; self.addr = addr
+        self.service = service; self.txn = 0; self.timeout = timeout; self.lock = threading.Lock(); self.waiting = 0; self.sock = None; self.ind = []; self.addr = addr
         self.connect()
     def connect(self):
         if self.addr: self.node, self.port = self.addr
@@ -45,7 +45,10 @@ class QMI:
         if r < 0: raise OSError(ctypes.get_errno(), 'sendto failed')
     def call(self, msg_id, tlvs=None, timeout=None):
         """tlvs: {type: bytes}. Returns {tlv type: bytes}, plus 'result': (qmi_result, qmi_error). Indications seen meanwhile go to .ind"""
-        with self.lock:
+        self.waiting += 1                                    # tells a blocking poll_ind() to give the lock up at once
+        try: self.lock.acquire()
+        finally: self.waiting -= 1
+        try:
             self.txn = (self.txn % 0xFFFE) + 1; body = b''.join(struct.pack('<BH', t, len(v)) + v for t, v in (tlvs or {}).items())
             self._send(struct.pack('<BHHH', 0, self.txn, msg_id, len(body)) + body)
             end = time.time() + (timeout or self.timeout)
@@ -61,18 +64,21 @@ class QMI:
                     tl['result'] = struct.unpack('<HH', tl[2][:4]) if 2 in tl else (0, 0)
                     return tl
             raise TimeoutError('QMI 0x%x/0x%x timed out' % (self.service, msg_id))
+        finally: self.lock.release()
     def poll_ind(self, timeout=0.1):
-        """collect indications: -> [(msg_id, {tlvs})]"""
+        """collect indications: -> [(msg_id, {tlvs})]. Returns early when something arrives or when another thread wants to send a request."""
         end = time.time() + timeout
         with self.lock:
-            while time.time() < end:
-                self.sock.settimeout(max(0.01, end - time.time()))
+            while time.time() < end and not self.waiting:
+                self.sock.settimeout(max(0.01, min(0.2, end - time.time())))
                 try: d = self.sock.recv(4096)
-                except socket.timeout: break
+                except socket.timeout: continue
                 if len(d) >= 7:
                     fl, txn, mid, ln = struct.unpack_from('<BHHH', d, 0)
                     if fl == 4: self.ind.append((mid, parse_tlvs(d[7:7 + ln])))
+                if self.ind: break
             out, self.ind = self.ind, []
+        time.sleep(0.02)                                     # let a waiting request take the lock
         return out
 
 def parse_tlvs(b):
