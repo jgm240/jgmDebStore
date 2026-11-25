@@ -25,7 +25,7 @@ w = wave.open("$W", "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(
 w.writeframes(b"".join(struct.pack("<h", max(-32767, min(32767, x))) for x in s)); w.close()
 PY
       sh /opt/jgm/audio-speaker.sh
-      (nohup sh -c "while :; do aplay -q -D hw:0,0 $W; done" >/dev/null 2>&1 &)
+      (nohup sh -c "while :; do aplay -q -D hw:0,0 $W || sleep 1; done" >/dev/null 2>&1 &)
     fi
     if [ "$3" != novibrate ] && [ -w $VIB ]; then
       (nohup sh -c "while :; do echo 800 > $VIB; sleep 2.4; done" >/dev/null 2>&1 &)

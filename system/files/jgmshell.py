@@ -2265,7 +2265,9 @@ def installed_pkgs():
         _inst['s'] = set(sh("dpkg-query -W -f='${Package} ${Status}\\n' 2>/dev/null | awk '$NF==\"installed\"{print $1}'", 30).split()); _inst['t'] = time.time()
     return _inst['s']
 def fmt_kb(kb): return '%.1f MB' % (kb / 1024) if kb >= 1024 else '%d KB' % kb
-def free_root_mb(): return int(sh("df -m / | awk 'NR==2{print $4}'") or 0)
+def free_root_mb():
+    try: st = os.statvfs('/'); return st.f_bavail * st.f_frsize // (1024 * 1024)
+    except OSError: return 0
 APT_ENV = 'DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none '
 class AptJob:
     """one apt command at a time; .status is the latest line, .done/.ok when finished"""

@@ -24,3 +24,10 @@ X server support (Xvfb viewer with keypad pointer/keyboard), Applications launch
 - call-audio.sh: serialised (flock), newer requests win, calibration FIFO can no longer hang, in-call volume (UP/DOWN), per-call kernel log in /data/jgm/call-kernel.log.
 - Call log: names, times, missed/declined, call back with CALL, options; missed calls are marked seen when opened. Answered/declined calls are logged.
 - Call waiting: a second call waits (notification) and is shown when the first call ends. Dialler: CALL on an empty number brings back the last one.
+
+1.6.1: Fixes found by testing 1.6.0 on the phone (no call placed):
+- The voice unmute / volume controls were never set (in any earlier version): amixer cannot write them (write-only, broken 0..-1 range). New voicectl.py writes them like the stock HAL.
+- voicepcm.py inherited call-audio's lock, so switching to the speaker waited 60 s; children no longer get the lock fd.
+- voicepcm.py prepared the stream twice ("Start voice called in state 1"); fixed.
+- Ringtone/ringback loops no longer spin if aplay fails. Software store: free space without spawning df every second. Watcher logs a missing SIM once, not every 15 s.
+Bench-verified on the phone: old aplay/arecord method dies after 8-18 s (I/O error); voicepcm keeps the session; DTMF messages accepted (old 0x25 rejected as unknown); speaker switch 4 s.

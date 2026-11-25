@@ -154,7 +154,10 @@ class Watcher(threading.Thread):
                     S.refresh(); reconnect(); addr = srv.get(VOICE); set_up = False
                 if not set_up:
                     st = S.setup(20)
-                    if not st['ok']: debug('watcher: setup: %s' % st.get('why')); time.sleep(15); continue
+                    if not st['ok']:
+                        if st.get('why') != getattr(self, 'last_why', None): debug('watcher: setup: %s' % st.get('why')); self.last_why = st.get('why')
+                        time.sleep(15); continue
+                    self.last_why = None
                     set_up = True
                 if not register(): time.sleep(5); continue
                 inds = svc().poll_ind(3.0)                              # returns when an indication arrives (cheap while idle)

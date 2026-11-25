@@ -13,7 +13,7 @@ w.writeframes(on + b"\0\0" * 48000 * 5); w.close()
 PY
     sh $0 stop
     amixer -q -c 0 cset name="PRI_MI2S_RX Audio Mixer MultiMedia1" 1
-    (nohup sh -c "while :; do aplay -q -D hw:0,0 $W; done" >/dev/null 2>&1 &) ;;
+    (nohup sh -c "while :; do aplay -q -D hw:0,0 $W || sleep 1; done" >/dev/null 2>&1 &) ;;
   stop)
     pkill -f "do aplay -q -D hw:0,0 $W" 2>/dev/null          # the loop first, or it starts the next round
     pkill -f "aplay -q -D hw:0,0 $W" 2>/dev/null ;;

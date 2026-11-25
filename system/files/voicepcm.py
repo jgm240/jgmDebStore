@@ -28,7 +28,7 @@ def open_stream(stream):
     chk(a.snd_pcm_sw_params_set_stop_threshold(p, sw, b), 'stop threshold')      # never stop on "xrun"
     if stream == 0: chk(a.snd_pcm_sw_params_set_silence_size(p, sw, b), 'silence')
     chk(a.snd_pcm_sw_params(p, sw), 'sw params'); a.snd_pcm_sw_params_free(sw)
-    chk(a.snd_pcm_prepare(p), 'prepare')
+    # (snd_pcm_set_params already prepared the stream; preparing again makes the driver try to start the voice session twice)
     r = a.snd_pcm_start(p)
     if r < 0: print('start %s: %s (prepared is enough for the voice session)' % (('playback', 'capture')[stream], a.snd_strerror(r).decode()), flush=True)
     return p

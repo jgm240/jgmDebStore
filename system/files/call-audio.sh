@@ -12,10 +12,8 @@ stop_pcm() {
   pkill -f "voicepcm.py" 2>/dev/null; pkill -f "aplay -D hw:0,2" 2>/dev/null; pkill -f "arecord -D hw:0,2" 2>/dev/null
   for i in 1 2 3 4 5 6 7 8 9 10; do alive || break; sleep 0.2; done          # the device must really be closed before it is opened again
 }
-levels() {                      # the DSP voice paths start muted / at the lowest volume: unmute and set levels like the stock config (mute flag, session -1 = all, ramp ms)
-  amixer -q -c 0 cset name="Voice Rx Device Mute" 0,-1,20 2>/dev/null || log "rx unmute failed"
-  amixer -q -c 0 cset name="Voice Tx Mute" 0,-1,20 2>/dev/null || log "tx unmute failed"
-  amixer -q -c 0 cset name="Voice Rx Gain" "$(cat /run/callaudio.vol 2>/dev/null || echo 3),-1,20" 2>/dev/null || log "rx gain failed"
+levels() {                      # unmute and set the volume like the stock HAL (value, session -1 = all, ramp ms); amixer cannot write these controls
+  E=$(python3 /opt/jgm/voicectl.py "Voice Rx Device Mute=0,-1,20" "Voice Tx Mute=0,-1,20" "Voice Rx Gain=$(cat /run/callaudio.vol 2>/dev/null || echo 3),-1,20" 2>&1) || log "levels: $E"
 }
 routes_off() {
   c "PRI_MI2S_RX_Voice Mixer CSVoice" 0; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 0
@@ -38,7 +36,8 @@ kernel_log() {                  # keep this call's audio-related kernel messages
 case "$1" in
   volume)
     echo "$2" > /run/callaudio.vol
-    amixer -q -c 0 cset name="Voice Rx Gain" "$2,-1,20" 2>/dev/null || log "volume $2 failed"
+    pgrep -f voicepcm.py >/dev/null || exit 0            # no voice session: the next one starts with this volume
+    E=$(python3 /opt/jgm/voicectl.py "Voice Rx Gain=$2,-1,20" 2>&1) || log "volume $2: $E"
     exit 0 ;;
   handset|speaker|off) ;;
   *) echo "usage: $0 handset|speaker|off|volume N"; exit 1 ;;
@@ -58,7 +57,7 @@ kdebug +p
 c "MI2S_RX Channels" One; c "MI2S_TX Channels" One
 # the stock voice calibration for this device pair (the service keeps it loaded; handset = ACDB ids 7/4, speaker phone = 14/11)
 if [ "$1" = handset ]; then R=7; T=4; else R=14; T=11; fi
-timeout 8 sh /opt/jgm/jgmcal-daemon.sh send $R $T || log "calibration $R/$T not confirmed"
+timeout 8 sh /opt/jgm/jgmcal-daemon.sh send $R $T 9>&- || log "calibration $R/$T not confirmed"
 c "PRI_MI2S_RX_Voice Mixer CSVoice" 1; c "Voice_Tx Mixer TERT_MI2S_TX_Voice" 1
 levels
 c "ADC1 Volume" 6; c "DEC1 MUX" ADC1; c "IIR1 INP1 MUX" DEC1                     # microphone
@@ -71,12 +70,12 @@ else c "RX3 Digital Volume" 60; c "RX3 MIX1 INP1" RX1; c "SPK DAC Switch" 1; c "
 for try in 1 2 3 4 5 6 7 8; do
   [ "$(cat $MODE 2>/dev/null)" = "$1" ] || { stop_pcm; exit 0; }
   N=$(dmesg | grep -c "voice_apr_register: Unable")
-  (nohup python3 /opt/jgm/voicepcm.py hw:0,2 >> /run/voicepcm.log 2>&1 &)
+  (nohup python3 /opt/jgm/voicepcm.py hw:0,2 >> /run/voicepcm.log 2>&1 9>&- &)
   sleep 1.5
   if ! pgrep -f voicepcm.py >/dev/null; then               # fallback: the old way (works, but quits after ~10 s without data)
     log "voicepcm failed: $(tail -n 1 /run/voicepcm.log 2>/dev/null); using aplay/arecord"
-    (nohup aplay -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/zero >/dev/null 2>&1 &)
-    (nohup arecord -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/null >/dev/null 2>&1 &)
+    (nohup aplay -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/zero >/dev/null 2>&1 9>&- &)
+    (nohup arecord -D hw:0,2 -t raw -f S16_LE -r 8000 -c 1 /dev/null >/dev/null 2>&1 9>&- &)
     sleep 1.5
   fi
   if [ "$(dmesg | grep -c 'voice_apr_register: Unable')" -le "$N" ]; then
